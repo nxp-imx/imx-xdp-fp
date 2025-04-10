@@ -1,0 +1,15 @@
+# Compilation steps
+# Set kernel headers path, 
+export KERNEL_HEADERS=<path>
+Note: Kernel headers can be installed by using command in kernel source:
+	"make ARCH=arm64 headers_install INSTALL_HDR_PATH=<path>"
+
+# Set CC path
+export CC=<gcc path>
+
+# This repository has dependancy on bpf, zstd, z and elf libraries.
+# If headers and libraries path already set in CFLAGS, CLANG_FLAGS and LDFLAGS, then use:
+make
+
+# If no libs available, want to use local libs available in this repo, use:
+make USE_LOCAL_LIBS=1

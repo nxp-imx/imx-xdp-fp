@@ -1,12 +1,14 @@
 # Default values
-KERNEL_HEADERS ?= /home/nxa12342/linux-lts-nxp/install
-CC := /home/nxa12342/toolchain/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-gcc
+CC ?= gcc
 ARCH ?= arm64
 llc ?= llc
 clang ?= clang
 PREFIX ?= ./install
-USE_LOCAL_LIBS ?= 1
+USE_LOCAL_LIBS ?= 0
 
+ifeq ($(KERNEL_HEADERS),)
+$(error KERNEL_HEADERS is not set. please define it as the path of kernel installed headers)
+endif
 
 CL_FLAGS := -g -O2 -emit-llvm -target bpf -D__KERNEL__ -D__BPF__ -Wall \
 	-I$(KERNEL_HEADERS)/include
@@ -15,10 +17,12 @@ CL_FLAGS := -g -O2 -emit-llvm -target bpf -D__KERNEL__ -D__BPF__ -Wall \
 C_FLAGS := -Wall \
 	-I$(KERNEL_HEADERS)/include
 
+L_FLAGS := -lzstd -lz -lelf -lbpf
+
 ifeq ($(USE_LOCAL_LIBS),1)
 CL_FLAGS +=-I./lib/usr/include/
 C_FLAGS +=-I./lib/usr/include/
-L_FLAGS := -L./lib/usr/lib -lzstd -lz -lelf -lbpf
+L_FLAGS += -L./lib/usr/lib
 endif
 
 BINDIR := $(PREFIX)/bin
@@ -36,7 +40,7 @@ xdp_fp_kern.bc: xdp_fp_kern.c
 	$(clang) $(CLANG_FLAGS) $(CL_FLAGS) -c $< -o $@
 
 $(TARGETBIN): xdp_fp_user.c
-	$(CC) $(CFLAGS) $(C_FLAGS) $(LDFLAGS) $(L_FLAGS) $< -o $@
+	$(CC) $(CFLAGS) $(C_FLAGS) $(LDFLAGS) $< -o $@ $(L_FLAGS)
 
 install: all
 	$(INSTALL) -D -m 755 xdp_fp $(DESTDIR)$(BINDIR)/$(TARGETBIN)
