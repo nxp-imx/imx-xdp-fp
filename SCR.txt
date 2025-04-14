@@ -1,0 +1,13 @@
+Software Content Register
+--------------------------------------------
+
+Package:                     imx-xdp-fp.git
+Version:                     1.0
+Outgoing License:            GPL-2.0
+License File:                LICENSE
+Package Category:            BSP
+Type of Content:             source
+Description and comments:    XDP Fastpath Networking Application
+Release Location:            https://github.com/nxp/imx-xdp-fp
+Origin:                      NXP (GPL-2.0)
+                             xdp_fpr_user.c - David Ahern (GPL-2.0) - Userspace tool to load XDP program

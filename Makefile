@@ -1,3 +1,5 @@
+# Copyright 2025 NXP
+
 # Default values
 CC ?= gcc
 ARCH ?= arm64
