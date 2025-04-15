@@ -1,0 +1,48 @@
+#
+# NAT protocol flow_src_ip flow_dest_ip flow_sport flow_dport NAT_src_ip NAT_dest_ip NAT_sport NAT_dport
+# NAT: 			Keyword for exact flow match
+# Protocol:		Layer3 Protocol (UDP/TCP)
+# flow_src_ip:		Flow source IP address in hexadecimal
+# flow_dest_ip:		Flow destination IP address in hexadecimal
+# flow_sport:		Layer3 source port of flow
+# flow_dport:		Layer3 destination port of flow
+# NAT_src_ip:		Source IP address in hexdecimal which will be used for NAT
+# NAT_dest_ip:		Destination IP address in hexdecimal which will be used for NAT
+# NAT_sport:		Layer3 source port for NAT
+# NAT_dport:		Layer3 destination port for NAT
+
+nat_saddr=192.168.2.1
+nat_daddr=192.168.3.1
+nat_sport=1025
+nat_dport=5001
+mtu=1500
+saddr=192.168.1.1
+daddr=192.168.4.4
+sport=1025
+dport=5001
+protocol=17
+interface=eth0
+
+nat_saddr=192.168.2.2
+nat_daddr=192.168.3.2
+nat_sport=1025
+nat_dport=5001
+mtu=1500
+saddr=192.168.1.2
+daddr=192.168.4.2
+sport=1025
+dport=5001
+protocol=17
+interface=eth0
+
+nat_saddr=192.168.2.3
+nat_daddr=192.168.3.3
+nat_sport=1025
+nat_dport=5001
+mtu=1500
+saddr=192.168.1.3
+daddr=192.168.4.3
+sport=1025
+dport=5001
+protocol=17
+interface=eth0

@@ -8,8 +8,6 @@ Note: Kernel headers can be installed by using command in kernel source:
 export CC=<gcc path>
 
 # This repository has dependancy on bpf, zstd, z and elf libraries.
-# If headers and libraries path already set in CFLAGS, CLANG_FLAGS and LDFLAGS, then use:
-make
+# Set headers and libraries path in CFLAGS, CLANG_FLAGS and LDFLAGS, then run:
 
-# If no libs available, want to use local libs available in this repo, use:
-make USE_LOCAL_LIBS=1
+make
