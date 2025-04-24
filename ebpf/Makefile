@@ -5,7 +5,7 @@ CC ?= gcc
 ARCH ?= arm64
 llc ?= llc
 clang ?= clang
-PREFIX ?= /usr
+INSTALLDIR ?= ../deploy_xdp
 KERNEL_HEADERS ?= $(SDKTARGETSYSROOT)/usr
 
 CL_FLAGS := -g -O2 -emit-llvm -target bpf -D__aarch64__ -D__KERNEL__ -D__BPF__ -Wall \
@@ -18,7 +18,6 @@ CL_FLAGS += -I../include
 C_FLAGS += -I../include/	
 L_FLAGS := -lzstd -lz -lelf -lbpf
 
-BINDIR := $(PREFIX)/bin
 TARGETPROG := xdp_fp_kern.o
 
 INSTALL := install
@@ -31,7 +30,7 @@ xdp_fp_kern.bc: xdp_fp_kern.c
 	$(clang) $(CLANG_FLAGS) $(CL_FLAGS) -c $< -o $@
 
 install: all
-	$(INSTALL) -D -m 644 $(TARGETPROG) $(DESTDIR)$(BINDIR)/$(TARGETPROG)
+	$(INSTALL) -D -m 644 $(TARGETPROG) $(INSTALLDIR)/$(TARGETPROG)
 clean:
 	rm -f *.o
 	rm -f *.bc

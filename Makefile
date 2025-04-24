@@ -13,6 +13,7 @@ install:
 clean:
 	$(MAKE) -C app clean
 	$(MAKE) -C ebpf clean
+	rm -rf deploy_xdp
 
 
 .PHONY: all app ebpf install clean
