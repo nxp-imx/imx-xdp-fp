@@ -304,6 +304,7 @@ static int update_ipv4_entries(int map_fd)
 				}
 			}
 			ipv4_value.flags = FP_INFO_FLAG_FAST_PATH;
+			set_ipv4_checksum_correction(&ipv4_key, &ipv4_value);
 			ret = bpf_map_update_elem(map_fd, &ipv4_key, &ipv4_value, BPF_ANY);
 			if (ret) {
 				perror("bpf_map_update_elem");
