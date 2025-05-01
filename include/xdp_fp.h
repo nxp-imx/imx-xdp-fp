@@ -26,7 +26,6 @@
 	inline __attribute__((always_inline))
 #endif
 
-//#define DEBUG 1
 #ifdef  DEBUG
 /* Only use this for debug output. Notice output from bpf_trace_printk()
  * end-up in /sys/kernel/debug/tracing/trace_pipe
@@ -40,8 +39,5 @@
 #else
 #define bpf_debug(fmt, ...) { } while (0)
 #endif
-//extern struct bpf_elf_map fp_modules;
-//extern struct bpf_elf_map fp_globals;
-//extern struct bpf_elf_map fp_stats;
 
 #endif /* _XDP_FP_H */

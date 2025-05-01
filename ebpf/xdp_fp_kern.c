@@ -98,7 +98,6 @@ struct {
 	__uint(max_entries,MAX_FP_ROUTES);
 } fp_route SEC(".maps");
 
-//SEC("xdp_prepare_transmit")
 static __always_inline int prepare_transmit(struct xdp_md *ctx)
 {
 	void *data = (void *)(long)ctx->data;
@@ -228,7 +227,6 @@ pass:
 	return XDP_PASS;
 }
 
-//SEC("xdp_prepare_transmit_rawip")
 static __always_inline int prepare_transmit_rawip(struct xdp_md *ctx)
 {
 	void *data = (void *)(long)ctx->data;
@@ -372,7 +370,6 @@ pass:
 	return XDP_PASS;
 }
 
-//SEC("xdp_parse_ipv6")
 static __always_inline int parse_ipv6(struct xdp_md *ctx)
 {
 	u8 *next_hdr, protocol;
@@ -606,7 +603,6 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 	*ifindex = info->route_ifindex;
 
 	return prepare_transmit(ctx);
-//	bpf_tail_call(ctx, &fp_modules, TX_ENTRY);
 
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
@@ -617,7 +613,6 @@ pass:
 	return XDP_PASS;
 }
 
-//SEC("xdp_parse_ipv6_rawip")
 static __always_inline int parse_ipv6_rawip(struct xdp_md *ctx)
 {
 	u8 *next_hdr, protocol;
@@ -830,7 +825,6 @@ static __always_inline int parse_ipv6_rawip(struct xdp_md *ctx)
 	*ifindex = info->route_ifindex;
 
 	return prepare_transmit_rawip(ctx);
-//	bpf_tail_call(ctx, &fp_modules, TX_RAWIP_ENTRY);
 
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
@@ -842,7 +836,6 @@ pass:
 	return XDP_PASS;
 }
 
-//SEC("xdp_parse_ipv4")
 static __always_inline int parse_ipv4(struct xdp_md *ctx)
 {
 	struct udp_hdr *udph;
@@ -1051,7 +1044,6 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 	*ifindex = info->route_ifindex;
 
 	return prepare_transmit(ctx);
-//	bpf_tail_call(ctx, &fp_modules, TX_ENTRY);
 
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
@@ -1063,7 +1055,6 @@ pass:
 	return XDP_PASS;
 }
 
-//SEC("xdp_ipv4_rawip")
 static __always_inline int parse_ipv4_rawip(struct xdp_md *ctx)
 {
 	struct udp_hdr *udph;
@@ -1251,7 +1242,6 @@ static __always_inline int parse_ipv4_rawip(struct xdp_md *ctx)
 	*ifindex = info->route_ifindex;
 
 	return prepare_transmit_rawip(ctx);
-//	bpf_tail_call(ctx, &fp_modules, TX_RAWIP_ENTRY);
 
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
@@ -1351,16 +1341,10 @@ int xdp_fp_prog_rawip(struct xdp_md *ctx)
 	}
 
 	/* Differentiate IPV4 vs IPV6 from the version IP header field */
-	if (iph->version == IPV4_VERSION) {
-		/* bpf_debug("Calling IPV4_RAWIP module\n"); */
+	if (iph->version == IPV4_VERSION)
 		return parse_ipv4_rawip(ctx);
-//		bpf_tail_call(ctx, &fp_modules, IPV4_RAWIP_ENTRY);
-	}
-	else if (iph->version == IPV6_VERSION) {
-		/* bpf_debug("Calling IPV6_RAWIP module\n"); */
+	else if (iph->version == IPV6_VERSION)
 		return parse_ipv6_rawip(ctx);
-//		bpf_tail_call(ctx, &fp_modules, IPV6_RAWIP_ENTRY);
-	}
 
 	/* Fallthrough */
 	bpf_debug("%s: Unmanaged IP version:%u => XDP_PASS\n", module, (unsigned int)(iph->version));
@@ -1375,8 +1359,4 @@ pass:
 	return XDP_PASS;
 }
 
-#ifdef DEBUG
 char _license[] __section("license") = "GPL";
-#else
-char _license[] __section("license") = "Proprietary";
-#endif
