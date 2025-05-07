@@ -4,16 +4,13 @@
 CC ?= gcc
 ARCH ?= arm64
 llc ?= llc
-clang ?= clang
+clang ?= clang --sysroot=$(SDKTARGETSYSROOT)
 INSTALLDIR ?= ../deploy_xdp
-KERNEL_HEADERS ?= $(SDKTARGETSYSROOT)/usr
 
-CL_FLAGS := -g -O2 -emit-llvm -target bpf -D__aarch64__ -D__KERNEL__ -D__BPF__ -Wall \
-	-I$(KERNEL_HEADERS)/include
+CL_FLAGS := -g -O2 -emit-llvm -target bpf -D__aarch64__ -D__KERNEL__ -D__BPF__ -Wall
 
 
-C_FLAGS := -Wall \
-	-I$(KERNEL_HEADERS)/include 
+C_FLAGS := -Wall
 CL_FLAGS += -I../include
 C_FLAGS += -I../include/	
 L_FLAGS := -lzstd -lz -lelf -lbpf

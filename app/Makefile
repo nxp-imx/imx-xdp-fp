@@ -6,10 +6,8 @@ ARCH ?= arm64
 llc ?= llc
 clang ?= clang
 INSTALLDIR ?= ../deploy_xdp
-KERNEL_HEADERS ?= $(SDKTARGETSYSROOT)/usr
 
-C_FLAGS := -Wall \
-	-I$(KERNEL_HEADERS)/include 
+C_FLAGS := -Wall
 C_FLAGS += -I../include/	
 L_FLAGS := -lz -lelf -lbpf
 
