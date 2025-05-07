@@ -1,6 +1,6 @@
 # Compilation steps
-# Set kernel headers path, 
-export KERNEL_HEADERS=<path>
+# Set kernel headers include path:
+export SDKTARGETSYSROOT=<path>
 Note: Kernel headers can be installed by using command in kernel source:
 	"make ARCH=arm64 headers_install INSTALL_HDR_PATH=<path>"
 
@@ -8,6 +8,7 @@ Note: Kernel headers can be installed by using command in kernel source:
 export CC=<gcc path>
 
 # This repository has dependancy on bpf, zstd, z and elf libraries.
+# To enable BPF debugs , add "-DDEBUG" in CLANG_FLAGS.
 # Set headers and libraries path in CFLAGS, CLANG_FLAGS and LDFLAGS, then run:
 
 make
@@ -37,44 +38,51 @@ NAT Flow Setup and Testing Guide
 - Two Sprint ports
 
 2. Network Setup
-Sprint Port Configuration
-1. Connect Sprint Port 1 to eth0 on the i.MX95 board.
-Configure the connected device:
-IPv4 Address: 1.1.1.2
-IPv4 Gateway: 1.1.1.1
+   Sprint Port Configuration
+   1. Connect Sprint Port 1 to eth0 on the i.MX95 board.
+     Configure the connected device:
+       IPv4 Address: 1.1.1.2
+       IPv4 Gateway: 1.1.1.1
 
-2. Connect Sprint Port 2 to eth1 on the i.MX95 board.
-Configure the connected device:
-IPv4 Address: 4.4.4.1
-IPv4 Gateway: 4.4.4.4
+   2. Connect Sprint Port 2 to eth1 on the i.MX95 board.
+     Configure the connected device:
+       IPv4 Address: 4.4.4.1
+       IPv4 Gateway: 4.4.4.4
 
 i.MX95 Board Configuration
 Assign IP addresses to Ethernet interfaces:
-ifconfig eth0 1.1.1.1 up
-ifconfig eth1 4.4.4.4 up
+  ifconfig eth0 1.1.1.1 up
+  ifconfig eth1 4.4.4.4 up
 Add a static route:
-ip route add 8.8.8.0/24 via 4.4.4.1
+  ip route add 8.8.8.0/24 via 4.4.4.1
 Enable IP forwarding:
-echo 1 > /proc/sys/net/ipv4/ip_forward
+  echo 1 > /proc/sys/net/ipv4/ip_forward
 Verify network connectivity:
-ping 1.1.1.2
-ping 4.4.4.1
+  ping 1.1.1.2
+  ping 4.4.4.1
 
 3. NAT Flow Rule Setup
-Edit the input.txt file and add the following NAT flow rule:
-nat_saddr=4.4.4.2
-nat_daddr=8.8.8.8
-nat_sport=1036
-nat_dport=1024
-mtu=1500
-saddr=1.1.1.2
-daddr=8.8.8.8
-sport=1024
-dport=1024
-protocol=17
-interface=eth1
+Edit the input.txt file available at /opt/xdp/ and add the following NAT flow rule:
+  nat_saddr=4.4.4.2
+  nat_daddr=8.8.8.8
+  nat_sport=1036
+  nat_dport=1024
+  mtu=1500
+  saddr=1.1.1.2
+  daddr=8.8.8.8
+  sport=1024
+  dport=1024
+  protocol=17
+  interface=eth1
 
-4. Traffic Generation and Packet Capture
+4. Load the XDP program on both eth0 and eth1.
+	- cd /opt/xdp/
+	- xdp_fp -D eth0 eth1
+
+	Note: xdp_fp, xdp_fp_kern.o and input.txt must be present in the same directory.
+		use "xdp_fp -h" for help.
+
+5. Traffic Generation and Packet Capture
 Generate a traffic stream from Sprint Port 1 towards 8.8.8.8.
 Capture the packets at Sprint Port 2.
 
