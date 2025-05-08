@@ -495,7 +495,7 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 
 			/* Check for IP datagram length validity */
 			if ((htons(iph->payload_len) + IPV6_HEADER_LENGTH > info->mtu) ||
-					((u16)((u64)data_end - (u64)data - nh_off) > info->mtu)) {
+					(((u64)data_end - (u64)data - (u64)nh_off) > (u64)info->mtu)) {
 				bpf_debug("%s/UDP: Invalid IP size (%u) > MTU (%u) => XDP_PASS\n",
 						module, (unsigned int)(htons(iph->payload_len) + IPV6_HEADER_LENGTH), (unsigned int)(info->mtu));
 				goto pass;
@@ -555,15 +555,13 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 				bpf_debug("%s/TCP: Invalid route => XDP_PASS\n", module);
 				goto pass;
 			}
-
 			/* Check for IP datagram length validity */
 			if ((htons(iph->payload_len) + IPV6_HEADER_LENGTH > info->mtu) ||
-					((u16)((u64)data_end - (u64)data - nh_off) > info->mtu)) {
+					(((u64)data_end - (u64)data - (u64)nh_off) > (u64)info->mtu)) {
 				bpf_debug("%s/TCP: Invalid IP size (%u) > MTU (%u) => XDP_PASS\n",
 						module, (unsigned int)(htons(iph->payload_len) + IPV6_HEADER_LENGTH), (unsigned int)(info->mtu));
 				goto pass;
 			}
-
 			info->active = 1U;
 
 			/* WARNING!!! packet may be modified by xdp program after this point
@@ -934,7 +932,7 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 
 			/* Check for IP datagram length validity */
 			if ((htons(iph->total_len) > info->mtu) || 
-					((u16)((u64)data_end - (u64)data - nh_off) > info->mtu)) {
+					(((u64)data_end - (u64)data - (u64)nh_off) > (u64)info->mtu)) {
 				bpf_debug("%s/UDP: Invalid IP size (%u) > MTU (%u) => XDP_PASS\n",
 						module, (unsigned int)(htons(iph->total_len)), (unsigned int)(info->mtu));
 				goto pass;
@@ -997,7 +995,7 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 			}
 
 			if ((htons(iph->total_len) > info->mtu) ||
-					((u16)((u64)data_end - (u64)data - nh_off) > info->mtu)) {
+					(((u64)data_end - (u64)data - (u64)nh_off) > (u64)info->mtu)) {
 				bpf_debug("%s/TCP: Invalid IP size (%u) > MTU (%u) => XDP_PASS\n",
 						module, (unsigned int)(htons(iph->total_len)), (unsigned int)(info->mtu));
 				goto pass;
@@ -1298,23 +1296,6 @@ int xdp_fp_prog(struct xdp_md *ctx)
 	}
 
 	h_proto = eth->h_proto;
-#if 0
-	if (h_proto == htons(ETHERTYPE_VLAN) ||
-			h_proto == htons(ETHERTYPE_VLAN_STAG)) {
-		struct vlan_ethhdr *vhdr = data;
-
-		if ((void *)(vhdr + 1) > data_end) {
-			bpf_debug("%s: Invalid vhdr(%p) + 1 > data_end(%p) => XDP_PASS\n",
-				module, (void *)vhdr, data_end);
-			goto pass;
-		}
-#ifdef VLAN_TRACING
-		bpf_debug("%s: VLAN TPID(%x) VLAN TCI (%u)\n",
-			module, htons(vhdr->h_vlan_proto), (unsigned int)htons(vhdr->h_vlan_TCI));
-#endif
-		h_proto = vhdr->h_vlan_encapsulated_proto;
-	}
-#endif
 	if (h_proto == htons(ETHERTYPE_IPV4)) {
 		/* bpf_debug("Calling IPV4 module\n"); */
 		return parse_ipv4(ctx);
