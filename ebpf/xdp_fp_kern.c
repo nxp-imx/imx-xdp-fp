@@ -22,6 +22,14 @@ struct vlan_hdr {
         __be16  h_vlan_encapsulated_proto;
 };
 
+struct vlan_ethhdr {
+	unsigned char   h_dest[ETH_ALEN];
+	unsigned char   h_source[ETH_ALEN];
+	__be16      h_vlan_proto;
+	__be16      h_vlan_TCI;
+	__be16      h_vlan_encapsulated_proto;
+};
+
 #define MAX_MODULES     6
 #define MAX_CPUS        6
 #define PIN_GLOBAL_NS   2
@@ -1286,6 +1294,23 @@ int xdp_fp_prog(struct xdp_md *ctx)
 	}
 
 	h_proto = eth->h_proto;
+
+	if (h_proto == htons(ETHERTYPE_VLAN) ||
+			h_proto == htons(ETHERTYPE_VLAN_STAG)) {
+		struct vlan_ethhdr *vhdr = data;
+
+		if ((void *)(vhdr + 1) > data_end) {
+			bpf_debug("%s: Invalid vhdr(%p) + 1 > data_end(%p) => XDP_PASS\n",
+					module, (void *)vhdr, data_end);
+			goto pass;
+		}
+#ifdef VLAN_TRACING
+		bpf_debug("%s: VLAN TPID(%x) VLAN TCI (%u)\n",
+			module, htons(vhdr->h_vlan_proto), (unsigned int)htons(vhdr->h_vlan_TCI));
+#endif
+		h_proto = vhdr->h_vlan_encapsulated_proto;
+	}
+
 	if (h_proto == htons(ETHERTYPE_IPV4)) {
 		/* bpf_debug("Calling IPV4 module\n"); */
 		return parse_ipv4(ctx);
