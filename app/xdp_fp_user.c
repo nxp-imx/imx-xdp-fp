@@ -51,17 +51,11 @@
 #define LINE_LEN 128
 #define VLAN_ID 42
 
+/* Default MAC addresses */
 static unsigned char if1_mac_addr[ETH_ALEN] =
                 { 0x00, 0x04, 0x9F, 0x05, 0xC8, 0x39 };
-static unsigned char if2_mac_addr[ETH_ALEN] =
-                { 0x6C, 0xB3, 0x11, 0x1B, 0x62, 0xB1 };
 static unsigned char dst_mac_addr1[ETH_ALEN] =
                 { 0x02, 0xFF, 0xFF, 0xFF, 0x01, 0x02 };
-static unsigned char dst_mac_addr2[ETH_ALEN] =
-                { 0x02, 0xFF, 0xFF, 0xFF, 0x02, 0x02 };
-
-static int lan_if;
-static int wan_if;
 
 struct vlan_info {
         u16 vlan_id;
@@ -418,14 +412,13 @@ int main(int argc, char **argv)
 	int prog_fd = -1;
 	char filename[PATH_MAX];
 	struct bpf_object *obj;
-	int opt, i, idx, err;
+	int opt, i, idx, err, icount = 0;
 	int attach = 1;
 	int ret = -1;
 	__u32 port_key = -1, port_value = -1;
 
 	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1, port_fd = -1;
-	char lif[MAX_IF_NAME_LEN], wif[MAX_IF_NAME_LEN];
-	int lif_set = 0;
+	char fif[MAX_IF_NAME_LEN];
 
 	int reset_stat = 0, print_stat = 0, ff_disabled = 0, ff_status, show_globals = 0,
 	    user_rules = 0;
@@ -541,8 +534,23 @@ int main(int argc, char **argv)
 		port_fd = bpf_object__find_map_fd_by_name(obj, "fp_tx_ports");
 		if (port_fd < 0) {
 			printf("bpf_object__find_map_fd_by_name failed for fp_tx_ports");
-			return 1;
+			goto out;
 		}
+
+		ipv4_fd = bpf_object__find_map_fd_by_name(obj, "fp_ipv4");
+		if (ipv4_fd < 0) {
+			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+					PINNED_IPV4, strerror(errno), errno);
+			goto out;
+		}
+
+		route_fd = bpf_object__find_map_fd_by_name(obj, "fp_route");
+		if (route_fd < 0) {
+			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+					PINNED_ROUTE, strerror(errno), errno);
+			goto out;
+		}
+
 	}
 
 	for (i = optind; i < argc; ++i) {
@@ -554,18 +562,17 @@ int main(int argc, char **argv)
 			fprintf(stderr, "Invalid arg\n");
 			return 1;
 		}
-		if (!lif_set) {
-			sprintf(lif, "%s", argv[i]);
-			lif_set = 1;
-		} else {
-			sprintf(wif, "%s", argv[i]);
-		}
+		sprintf(fif, "%s", argv[i]);
 
 		if (!attach) {
 			err = do_detach(idx, argv[i], prog_name);
 			if (err)
 				ret = err;
 		} else {
+			if (icount++ > MAX_PORT) {
+				fprintf(stderr, "No more ports allowed\n");
+				break;
+			}
 			err = do_attach(idx, prog_fd, argv[i]);
 			if (err)
 				ret = err;
@@ -579,47 +586,23 @@ int main(int argc, char **argv)
 			} else {
 				printf("Added ifindex %d (%s) to fp_tx_ports map\n", idx, argv[i]);
 			}
+			if (user_rules) {
+				/* Update the ebpf maps*/
+				ret = get_device_info(fif, if1_mac_addr, NULL);
+				if (ret) {
+					fprintf(stderr, "unknown linterface = %s\n", fif);
+					goto out;
+				}
+				ret = route_add(route_fd, idx, if1_mac_addr, dst_mac_addr1, NULL);
+				if (ret) {
+					fprintf(stderr, "BPF update route: %d", idx);
+					goto out;
+				}
+			}
 		}
-	}
-
-	/* Update the ebpf maps*/
-	ret = get_device_info(lif, if1_mac_addr, &lan_if);
-	if (ret) {
-		fprintf(stderr, "unknown linterface = %s\n", lif);
-		goto out;
-	}
-	ret = get_device_info(wif, if2_mac_addr, &wan_if);
-	if (ret) {
-		fprintf(stderr, "unknown winterface = %s\n", wif);
-		goto out;
-	}
-
-	ipv4_fd = bpf_obj_get(PINNED_IPV4);
-	if (ipv4_fd < 0) {
-		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-				PINNED_IPV4, strerror(errno), errno);
-		goto out;
-	}
-
-	route_fd = bpf_obj_get(PINNED_ROUTE);
-	if (route_fd < 0) {
-		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-				PINNED_ROUTE, strerror(errno), errno);
-		goto out;
 	}
 
 	if (user_rules) {
-		ret = route_add(route_fd, lan_if, if1_mac_addr, dst_mac_addr1, NULL);
-		if (ret) {
-			fprintf(stderr, "BPF update route: %d", lan_if);
-			goto out;
-		}
-
-		ret = route_add(route_fd, wan_if, if2_mac_addr, dst_mac_addr2, NULL);
-		if (ret) {
-			fprintf(stderr, "BPF update route: %d", wan_if);
-			goto out;
-		}
 		ret = update_ipv4_entries(ipv4_fd);
 		if (ret) {
 			perror("BPF update IPv4 entries");

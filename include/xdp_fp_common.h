@@ -11,6 +11,8 @@
 #define MAX_IPV4_ENTRIES	512
 #define MAX_IPV6_ENTRIES	512
 #define MAX_FP_ROUTES		512
+#define MAX_MAC_ADDR		512
+#define MAX_PORT		10
 
 #define MAX_L2_HEADER_SIZE	18
 

@@ -95,7 +95,7 @@ struct {
 	__uint(key_size, ETH_ALEN);
 	__uint(value_size, sizeof(int));
 	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries, 1024);
+	__uint(max_entries, MAX_MAC_ADDR);
 } fp_mac_to_port SEC(".maps");
 
 
@@ -104,7 +104,7 @@ struct {
 	__uint(key_size, sizeof(__u32));
 	__uint(value_size, sizeof(__u32));
 	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries, 10);
+	__uint(max_entries, MAX_PORT);
 } fp_tx_ports SEC(".maps");
 
 static void __always_inline ipv6_copy(u32 *a, u32 *b)
@@ -739,13 +739,7 @@ int xdp_fp_bridge_prog(struct xdp_md *ctx) {
 	}
 
 	// Flood to all ports except ingress
-#pragma unroll
-	for (__u32 i = 0; i < 10; i++) {
-		if (i == in_port) continue;
-		bpf_redirect_map(&fp_tx_ports, i, 0);
-	}
-
-	return XDP_DROP;
+	return bpf_redirect_map(&fp_tx_ports, 0, BPF_F_BROADCAST | BPF_F_EXCLUDE_INGRESS);
 }
 
 SEC("xdp_fp")
