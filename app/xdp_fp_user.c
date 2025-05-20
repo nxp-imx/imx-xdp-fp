@@ -39,6 +39,8 @@
 #define PINNED_IPV4 "/sys/fs/bpf/fp_ipv4"
 #define PINNED_IPV6 "/sys/fs/bpf/fp_ipv6"
 #define PINNED_ROUTE "/sys/fs/bpf/fp_route"
+#define PINNED_MAC_PORT "/sys/fs/bpf/fp_mac_to_port"
+#define PINNED_PORT "/sys/fs/bpf/fp_tx_ports"
 
 #define ETH_ALEN    6
 #define PROTO_VLAN 0x8100
@@ -77,6 +79,7 @@ static void print_usage(const char *prg)
 	fprintf(stderr, " -S    use skb-mode\n");
 	fprintf(stderr,	" -F    force loading prog\n");
 	fprintf(stderr,	" -a    attach program (list of ethernet devices)\n");
+	fprintf(stderr,	" -b    run program in bridge mode\n");
 	fprintf(stderr, " -e    enable Fast Forward (enabled by default)\n");
         fprintf(stderr, " -r    disable Fast Forward \n");
 	fprintf(stderr, " -z    reinitilialize statistics counters \n");
@@ -418,8 +421,9 @@ int main(int argc, char **argv)
 	int opt, i, idx, err;
 	int attach = 1;
 	int ret = -1;
+	__u32 port_key = -1, port_value = -1;
 
-	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1;
+	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1, port_fd = -1;
 	char lif[MAX_IF_NAME_LEN], wif[MAX_IF_NAME_LEN];
 	int lif_set = 0;
 
@@ -432,7 +436,7 @@ int main(int argc, char **argv)
 	int globals_key;
 	unsigned int nr_cpus = sysconf(_SC_NPROCESSORS_CONF);
 
-	while ((opt = getopt(argc, argv, "dauSFzsergh")) != -1) {
+	while ((opt = getopt(argc, argv, "dauSFzserghb")) != -1) {
 		switch (opt) {
 			case 'd':
 				attach = 0;
@@ -470,6 +474,9 @@ int main(int argc, char **argv)
 				break;
 			case 'u':
 				user_rules = 1;
+				break;
+			case 'b':
+				prog_name = "xdp_fp_bridge";
 				break;
 			case 'h':
 				print_usage(basename(argv[0]));
@@ -529,6 +536,13 @@ int main(int argc, char **argv)
 			printf("program not found: %s\n", strerror(prog_fd));
 			return 1;
 		}
+
+		// Get port map FD
+		port_fd = bpf_object__find_map_fd_by_name(obj, "fp_tx_ports");
+		if (port_fd < 0) {
+			printf("bpf_object__find_map_fd_by_name failed for fp_tx_ports");
+			return 1;
+		}
 	}
 
 	for (i = optind; i < argc; ++i) {
@@ -555,6 +569,16 @@ int main(int argc, char **argv)
 			err = do_attach(idx, prog_fd, argv[i]);
 			if (err)
 				ret = err;
+
+			/* populate fp_tx_port table */
+			port_key = idx;
+			port_value = idx;
+			err = bpf_map_update_elem(port_fd, &port_key, &port_value, BPF_ANY);
+			if (err) {
+				fprintf(stderr, "Update fp_tx_port fails\n");
+			} else {
+				printf("Added ifindex %d (%s) to fp_tx_ports map\n", idx, argv[i]);
+			}
 		}
 	}
 
@@ -671,6 +695,8 @@ stats:
 	return ret;
 
 out:
+        if (port_fd != -1)
+                close(port_fd);
         if (route_fd != -1)
                 close(route_fd);
         if (ipv4_fd != -1)

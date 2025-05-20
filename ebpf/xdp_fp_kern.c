@@ -90,6 +90,23 @@ struct {
 	__uint(max_entries,MAX_IPV6_ENTRIES);
 } fp_ipv6 SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(key_size, ETH_ALEN);
+	__uint(value_size, sizeof(int));
+	__uint(pinning,LIBBPF_PIN_BY_NAME);
+	__uint(max_entries, 1024);
+} fp_mac_to_port SEC(".maps");
+
+
+struct {
+	__uint(type, BPF_MAP_TYPE_DEVMAP);
+	__uint(key_size, sizeof(__u32));
+	__uint(value_size, sizeof(__u32));
+	__uint(pinning,LIBBPF_PIN_BY_NAME);
+	__uint(max_entries, 10);
+} fp_tx_ports SEC(".maps");
+
 static void __always_inline ipv6_copy(u32 *a, u32 *b)
 {
         a[0] = b[0];
@@ -1259,6 +1276,40 @@ pass:
 	}
 
 	return XDP_PASS;
+}
+
+SEC("xdp_fp_bridge")
+int xdp_fp_bridge_prog(struct xdp_md *ctx) {
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data = (void *)(long)ctx->data;
+	struct ethhdr *eth = data;
+
+	if ((void *)(eth + 1) > data_end)
+		return XDP_PASS;
+
+	__u32 in_port = ctx->ingress_ifindex;
+	__u8 *src_mac = eth->h_source;
+	__u8 *dst_mac = eth->h_dest;
+
+	// Learn source MAC
+	bpf_map_update_elem(&fp_mac_to_port, src_mac, &in_port, BPF_ANY);
+
+	// Lookup destination MAC
+	__u32 *out_port = bpf_map_lookup_elem(&fp_mac_to_port, dst_mac);
+
+	if (out_port && *out_port != in_port) {
+		// Forward to known port
+		return bpf_redirect_map(&fp_tx_ports, *out_port, 0);
+	}
+
+	// Flood to all ports except ingress
+#pragma unroll
+	for (__u32 i = 0; i < 10; i++) {
+		if (i == in_port) continue;
+		bpf_redirect_map(&fp_tx_ports, i, 0);
+	}
+
+	return XDP_DROP;
 }
 
 SEC("xdp_fp")
