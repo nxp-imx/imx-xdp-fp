@@ -544,8 +544,8 @@ int main(int argc, char **argv)
 				ret = err;
 		}
 	}
-	sprintf(lif, "%s", argv[2]);
-	sprintf(wif, "%s", argv[3]);
+	snprintf(lif, sizeof(lif), "%s", argv[2]);
+	snprintf(wif, sizeof(wif), "%s", argv[3]);
 
 	/* Update the ebpf maps*/
 	ret = get_device_info(lif, if1_mac_addr, &lan_if);
