@@ -12,7 +12,7 @@
 #define MAX_IPV6_ENTRIES	512
 #define MAX_FP_ROUTES		512
 #define MAX_MAC_ADDR		512
-#define MAX_PORT		10
+#define MAX_PORT		512
 
 #define MAX_L2_HEADER_SIZE	18
 
@@ -25,9 +25,9 @@
 
 
 enum {
-	GLOB_ETHERNET_TYPE = 0,
-	GLOB_RAWIP_TYPE,
-	GLOB_IFTYPE_MAX,
+	GLOB_IP_MODE = 0,
+	GLOB_BRIDGE_MODE,
+	GLOB_FP_MAX,
 };
 
 enum {
@@ -93,10 +93,12 @@ struct ipv6_info {
 };
 
 struct stats_entry {
-	u64 packets_fp[GLOB_IFTYPE_MAX]; /* fast path => transmitted */
-	u64 bytes_fp[GLOB_IFTYPE_MAX];
-	u64 packets_sp[GLOB_IFTYPE_MAX]; /* slow path => pass */
-	u64 bytes_sp[GLOB_IFTYPE_MAX];
+	u64 packets_fp[GLOB_FP_MAX]; /* fast path => transmitted */
+	u64 bytes_fp[GLOB_FP_MAX];
+	u64 packets_sp[GLOB_FP_MAX]; /* slow path => pass */
+	u64 bytes_sp[GLOB_FP_MAX];
+	u64 m_pkts_fp[GLOB_FP_MAX]; /* For bridge matched  stats*/
+	u64 nm_pkts_fp[GLOB_FP_MAX]; /* For bridge flood stats */
 };
 
 #endif

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright (c) 2017-18 David Ahern <dsahern@gmail.com>
+ * Copyright 2025 NXP
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of version 2 of the GNU General Public
@@ -85,33 +86,47 @@ static void print_usage(const char *prg)
 
 static void print_stats(struct stats_entry *stats_value, unsigned int nr_cpus)
 {
-	unsigned int i, iftype;
-	u64 all_bytes_fp[GLOB_IFTYPE_MAX] = {0}, all_packets_fp[GLOB_IFTYPE_MAX] = {0};
-	u64 all_bytes_sp[GLOB_IFTYPE_MAX] = {0}, all_packets_sp[GLOB_IFTYPE_MAX] = {0};
+	unsigned int i, mode;
+	u64 all_bytes_fp[GLOB_FP_MAX] = {0}, all_packets_fp[GLOB_FP_MAX] = {0};
+	u64 all_bytes_sp[GLOB_FP_MAX] = {0}, all_packets_sp[GLOB_FP_MAX] = {0};
 
-	for (iftype = 0u; iftype < GLOB_IFTYPE_MAX; iftype++) {
+	for (mode = 0u; mode < GLOB_FP_MAX; mode++) {
 		printf("--------------------------------------------------------------\n");
-		printf("-----------------FROM %s IFACE-----------------------------\n",
-			(iftype == GLOB_ETHERNET_TYPE) ? "ETHER" : "RAWIP");
+		printf("-----------------%s-------------------------\n",
+			(mode == GLOB_IP_MODE) ? " IP Forwarding Mode " : "--- Bridge Mode ----");
 		printf("--------------------------------------------------------------\n");
 		for (i = 0u; i < nr_cpus; i++) {
-			all_bytes_fp[iftype]   += stats_value[i].bytes_fp[iftype];
-			all_packets_fp[iftype] += stats_value[i].packets_fp[iftype];
-			printf("CPU%u   FP Bytes:%16lu   FP Packets:%16lu\n", i,
-				stats_value[i].bytes_fp[iftype],
-				stats_value[i].packets_fp[iftype]);
-			all_bytes_sp[iftype]   += stats_value[i].bytes_sp[iftype];
-			all_packets_sp[iftype] += stats_value[i].packets_sp[iftype];
-			printf("CPU%u   SP Bytes:%16lu   SP Packets:%16lu\n", i,
-				stats_value[i].bytes_sp[iftype],
-				stats_value[i].packets_sp[iftype]);
+			all_bytes_fp[mode]   += stats_value[i].bytes_fp[mode];
+			all_packets_fp[mode] += stats_value[i].packets_fp[mode];
+			if (stats_value[i].bytes_fp[mode]) {
+				printf("CPU%u   FP Bytes:%16lu   FP Packets:%16lu\n", i,
+					stats_value[i].bytes_fp[mode],
+					stats_value[i].packets_fp[mode]);
+			}
+			all_bytes_sp[mode]   += stats_value[i].bytes_sp[mode];
+			all_packets_sp[mode] += stats_value[i].packets_sp[mode];
+			if (stats_value[i].bytes_sp[mode]) {
+				printf("CPU%u   SP Bytes:%16lu   SP Packets:%16lu\n", i,
+					stats_value[i].bytes_sp[mode],
+					stats_value[i].packets_sp[mode]);
+			}
+			if (mode == GLOB_BRIDGE_MODE) {
+				if (stats_value[i].m_pkts_fp[mode]) {
+					printf("CPU%u   FP Matched Packets:%35lu\n", i,
+						stats_value[i].m_pkts_fp[mode]);
+				}
+				if (stats_value[i].nm_pkts_fp[mode]) {
+					printf("CPU%u   FP Unmatched Packets:%34lu\n", i,
+						stats_value[i].nm_pkts_fp[mode]);
+				}
+			}
 
 		}
-		printf("--------------------------------------------------------------\n");
+		printf("**************************************************************\n");
 		printf("Total: FP Bytes:%16lu   FP Packets:%16lu\n",
-			all_bytes_fp[iftype], all_packets_fp[iftype]);
+			all_bytes_fp[mode], all_packets_fp[mode]);
 		printf("Total: SP Bytes:%16lu   SP Packets:%16lu\n",
-			all_bytes_sp[iftype], all_packets_sp[iftype]);
+			all_bytes_sp[mode], all_packets_sp[mode]);
 		printf("--------------------------------------------------------------\n");
 	}
 }
@@ -498,6 +513,7 @@ int main(int argc, char **argv)
 			filename, strerror(errno));
 		return 1;
 	}
+	printf("Program Name %s\n", prog_name);
 
 	if (attach) {
 		obj = bpf_object__open_file(filename, NULL);
@@ -574,15 +590,17 @@ int main(int argc, char **argv)
 				break;
 			}
 			err = do_attach(idx, prog_fd, argv[i]);
-			if (err)
+			if (err) {
+				fprintf(stderr, "Port = %d program attach error\n", idx);
 				ret = err;
+			}
 
 			/* populate fp_tx_port table */
 			port_key = idx;
 			port_value = idx;
 			err = bpf_map_update_elem(port_fd, &port_key, &port_value, BPF_ANY);
 			if (err) {
-				fprintf(stderr, "Update fp_tx_port fails\n");
+				fprintf(stderr, "Update fp_tx_port failsf or idx = %d\n", idx);
 			} else {
 				printf("Added ifindex %d (%s) to fp_tx_ports map\n", idx, argv[i]);
 			}

@@ -230,10 +230,10 @@ static __always_inline int prepare_transmit(struct xdp_md *ctx)
 	}
 
 	bpf_debug("TX: Redirect packet:%llu (%llu) to interface:%d\n",
-			stats->packets_fp[GLOB_ETHERNET_TYPE], (u64)ctx->data_end - (u64)ctx->data, route->redir_ifindex);
+			stats->packets_fp[GLOB_IP_MODE], (u64)ctx->data_end - (u64)ctx->data, route->redir_ifindex);
 	if (stats) {
-		stats->packets_fp[GLOB_ETHERNET_TYPE]++;
-		stats->bytes_fp[GLOB_ETHERNET_TYPE] += (u64)ctx->data_end - (u64)ctx->data;
+		stats->packets_fp[GLOB_IP_MODE]++;
+		stats->bytes_fp[GLOB_IP_MODE] += (u64)ctx->data_end - (u64)ctx->data;
 	}
 
 	return bpf_redirect(route->redir_ifindex, 0);
@@ -245,8 +245,8 @@ static __always_inline int prepare_transmit(struct xdp_md *ctx)
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
 	if (stats) {
-		stats->packets_sp[GLOB_ETHERNET_TYPE]++;
-		stats->bytes_sp[GLOB_ETHERNET_TYPE] += (u64)ctx->data_end - (u64)ctx->data;
+		stats->packets_sp[GLOB_IP_MODE]++;
+		stats->bytes_sp[GLOB_IP_MODE] += (u64)ctx->data_end - (u64)ctx->data;
 	}
 
 	return XDP_PASS;
@@ -489,8 +489,8 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
 	if (stats) {
-		stats->packets_sp[GLOB_ETHERNET_TYPE]++;
-		stats->bytes_sp[GLOB_ETHERNET_TYPE] += (u64)ctx->data_end - (u64)ctx->data;
+		stats->packets_sp[GLOB_IP_MODE]++;
+		stats->bytes_sp[GLOB_IP_MODE] += (u64)ctx->data_end - (u64)ctx->data;
 	}
 	return XDP_PASS;
 }
@@ -707,8 +707,8 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
 	if (stats) {
-		stats->packets_sp[GLOB_ETHERNET_TYPE]++;
-		stats->bytes_sp[GLOB_ETHERNET_TYPE] += (u64)ctx->data_end - (u64)ctx->data;
+		stats->packets_sp[GLOB_IP_MODE]++;
+		stats->bytes_sp[GLOB_IP_MODE] += (u64)ctx->data_end - (u64)ctx->data;
 	}
 
 	return XDP_PASS;
@@ -719,10 +719,23 @@ int xdp_fp_bridge_prog(struct xdp_md *ctx) {
 	void *data_end = (void *)(long)ctx->data_end;
 	void *data = (void *)(long)ctx->data;
 	struct ethhdr *eth = data;
+	struct stats_entry *stats = NULL;
+	int *ff_disabled, index_key = GLOB_FF_DISABLE, index_key_stat = GLOB_STAT;
 
 	if ((void *)(eth + 1) > data_end)
-		return XDP_PASS;
+		goto pass;
 
+	stats = bpf_map_lookup_elem(&fp_stats, &index_key_stat);
+	if (!stats) {
+		bpf_debug("%s: No stats enabled\n", module);
+		goto pass;
+	}
+
+	ff_disabled =  bpf_map_lookup_elem(&fp_globals, &index_key);
+	if (!ff_disabled || *ff_disabled) {
+		bpf_debug("%s: fast forward disabled => XDP_PASS\n", module);
+		goto pass;
+	}
 	__u32 in_port = ctx->ingress_ifindex;
 	__u8 *src_mac = eth->h_source;
 	__u8 *dst_mac = eth->h_dest;
@@ -735,11 +748,26 @@ int xdp_fp_bridge_prog(struct xdp_md *ctx) {
 
 	if (out_port && *out_port != in_port) {
 		// Forward to known port
+		stats->packets_fp[GLOB_BRIDGE_MODE]++;
+		stats->m_pkts_fp[GLOB_BRIDGE_MODE]++;
+		stats->bytes_fp[GLOB_BRIDGE_MODE] += (u64)ctx->data_end - (u64)ctx->data;
 		return bpf_redirect_map(&fp_tx_ports, *out_port, 0);
 	}
 
 	// Flood to all ports except ingress
+	stats->packets_fp[GLOB_BRIDGE_MODE]++;
+	stats->nm_pkts_fp[GLOB_BRIDGE_MODE]++;
+	stats->bytes_fp[GLOB_BRIDGE_MODE] += (u64)ctx->data_end - (u64)ctx->data;
 	return bpf_redirect_map(&fp_tx_ports, 0, BPF_F_BROADCAST | BPF_F_EXCLUDE_INGRESS);
+pass:
+	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
+	if (stats) {
+		stats->packets_sp[GLOB_BRIDGE_MODE]++;
+		stats->bytes_sp[GLOB_BRIDGE_MODE] += (u64)ctx->data_end - (u64)ctx->data;
+	}
+
+	return XDP_PASS;
+
 }
 
 SEC("xdp_fp")
@@ -808,8 +836,8 @@ int xdp_fp_prog(struct xdp_md *ctx)
 pass:
 	bpf_debug("%s: => XDP_PASS(%llu)\n", module, (u64)ctx->data_end - (u64)ctx->data);
 	if (stats) {
-		stats->packets_sp[GLOB_ETHERNET_TYPE]++;
-		stats->bytes_sp[GLOB_ETHERNET_TYPE] += (u64)ctx->data_end - (u64)ctx->data;
+		stats->packets_sp[GLOB_IP_MODE]++;
+		stats->bytes_sp[GLOB_IP_MODE] += (u64)ctx->data_end - (u64)ctx->data;
 	}
 
 	return XDP_PASS;
