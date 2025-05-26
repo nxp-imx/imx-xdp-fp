@@ -258,6 +258,33 @@ quit
        ```bash
        ./xdp_fp -s
        ```
+ - UDP IPv6 Forwarding. Quick Steps:
+   - ```bash
+     ./load_cmm_modules.sh
+     ./network_setup.sh eth0 2001:db8:1::2 eth1 2001:db8:2::2
+     ./xdp_fp -a eth0 eth2
+     ./cmm
+     ```
+   - Prepare and send traffic
+     - Prepare a traffic stream on spirent port 1 with source IP 2001:DB8:1::1, GW 2001:DB8:1::2 and destination IP 2001:DB8:2::1 and destination MAC of interface eth0.
+     - Prepare a traffic stream on spirent port 2 with source IP 2001:DB8:2::1, GW 2001:DB8:2::2 and destination IP 2001:DB8:1::1 and destination MAC of interface eth1.
+     - Resolve ARP and check:
+       - ```bash
+         ip -6 neigh
+         ```
+     - Send traffic from both streams to observe the IPv6 forwarding behavior. For the first few packets,
+       the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+       Once the connection established, subsequent traffic will be counted as fastpath traffic.
+     - Check statistics:
+       ```bash
+       ./xdp_fp -s
+       ```
+     - Check connections:
+       ```bash
+       telnet 127.0.0.1 2103
+       # Login: admin / admin
+       sh conn
+       ```
 
 ### 3. IP forwarding fastpath mode with static user rules:
 
