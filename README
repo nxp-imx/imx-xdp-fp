@@ -262,7 +262,7 @@ quit
    - ```bash
      ./load_cmm_modules.sh
      ./network_setup.sh eth0 2001:db8:1::2 eth1 2001:db8:2::2
-     ./xdp_fp -a eth0 eth2
+     ./xdp_fp -a eth0 eth1
      ./cmm
      ```
    - Prepare and send traffic
@@ -284,6 +284,26 @@ quit
        telnet 127.0.0.1 2103
        # Login: admin / admin
        sh conn
+       ```
+ - UDP IPv4 Multi-flow performance. Quick Steps:
+   - ```bash
+     ./load_cmm_modules.sh
+     ./network_setup.sh --no-rxhash-off eth0 1.1.1.2 eth1 2.1.1.2
+     ./xdp_fp -a eth0 eth1
+     ./cmm
+     ip route add 2.1.20.0/24 via 2.1.1.1 dev eth1
+     ip route add 1.1.10.0/24 via 1.1.1.1 dev eth0
+     ```
+   - Prepare and send traffic
+     - Prepare a traffic stream on spirent port 1 with source IP 1.1.10.3, GW 1.1.1.2 and destination IP 2.1.20.3 with IPv4 Modifier "Count=128;Step=0.0.0.1" and destination MAC of interface eth0.
+     - Prepare a traffic stream on spirent port 2 with source IP 2.1.20.3, GW 2.1.1.2 and destination IP 1.1.10.2 with IPv4 Modifier "Count=128;Step=0.0.0.1" and destination MAC of interface eth1.
+     - Resolve ARP of both GW addresses "1.1.1.1" adn "2.1.1.1" on board.
+     - Send traffic from both streams to observe the IP forwarding behavior. For the first few packets,
+       the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+       Once the connection established, subsequent traffic will be counted as fastpath traffic.
+     - Check statistics of each core:
+       ```bash
+       ./xdp_fp -s
        ```
 
 ### 3. IP forwarding fastpath mode with static user rules:

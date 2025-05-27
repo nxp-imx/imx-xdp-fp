@@ -7,7 +7,7 @@ llc ?= llc
 clang ?= clang --sysroot=$(SDKTARGETSYSROOT)
 INSTALLDIR ?= ../deploy_xdp
 
-CL_FLAGS := -g -O2 -emit-llvm -target bpf -D__aarch64__ -D__KERNEL__ -D__BPF__ -Wall
+CL_FLAGS := -g -O3 -emit-llvm -target bpf -D__aarch64__ -D__KERNEL__ -D__BPF__ -Wall
 
 
 C_FLAGS := -Wall
