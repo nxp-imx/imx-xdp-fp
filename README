@@ -228,6 +228,26 @@ quit
  - UDP IPv4 traffic
  - TCP IPv4 traffic
  - SNAT and DNAT (with iptables commands)
+   - ```bash
+     ./load_cmm_modules.sh
+     ./network_setup.sh eth0 1.1.1.2 eth1 2.1.1.2
+     ./xdp_fp -a eth0 eth1
+     ./cmm
+     ip route add 9.1.1.0/24 via 2.1.1.1
+     iptables -t nat -A POSTROUTING -p udp -j SNAT --to-source 2.1.1.2:10000
+     ```
+   - Prepare and send traffic
+     - Prepare a traffic stream on spirent port 1 with source IP 1.1.1.1, GW 1.1.1.2 and destination IP 9.1.1.1 and destination MAC of interface eth0.
+     - Resolve ARP of both GW addresses "1.1.1.1" adn "2.1.1.1" on board.
+     - Send traffic from spirent port1 to observe the IP forwarding and NAT behavior. For the first few packets,
+       the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+       Once the connection established, subsequent traffic will be counted as fastpath traffic.
+     - Capture traffic on Spirent port2 to see NATed traffic.
+     - Check statistics of each core:
+       ```bash
+       ./xdp_fp -s
+       ```
+
  - VLAN traffic forwarding. Quick steps:
    - ```bash
      ./load_cmm_modules.sh
