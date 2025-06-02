@@ -692,6 +692,7 @@ int main(int argc, char **argv)
 				goto stats;
 				break;
 			case 'g':
+				ff_update = 0;
 				show_globals = 1;
 				goto stats;
 				break;
