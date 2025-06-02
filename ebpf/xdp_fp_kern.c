@@ -48,6 +48,7 @@ struct vlan_ethhdr {
 #define MAX_EXT_HEADERS 16U
 #define IPV6_VERSION    6U
 #define IPV6_HEADER_LENGTH 40U
+#define XDP_FP_SEC_NS   1000000000
 
 struct {
 	__uint(type,BPF_MAP_TYPE_ARRAY);
@@ -380,6 +381,24 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 				goto pass;
 			}
 
+			/* Rate Limit Check */
+			if (info->rate_limit > 0) {
+				__u64 now = bpf_ktime_get_ns();
+				__u64 elapsed_ns = now - info->last_time_ns;
+				int pkt_len = data_end - data;
+
+				if (elapsed_ns > XDP_FP_SEC_NS) {
+					info->bytes_count = 0;
+					info->last_time_ns = now;
+				}
+
+				info->bytes_count += pkt_len;
+
+				if (info->bytes_count > info->rate_limit) {
+					return XDP_DROP;
+				}
+			}
+
 			info->active = 1U;
 
 			/* WARNING!!! packet may be modified by xdp program after this point
@@ -441,6 +460,25 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 						module, (unsigned int)(htons(iph->payload_len) + IPV6_HEADER_LENGTH), (unsigned int)(info->mtu));
 				goto pass;
 			}
+
+			/* Rate Limit Check */
+			if (info->rate_limit > 0) {
+				__u64 now = bpf_ktime_get_ns();
+				__u64 elapsed_ns = now - info->last_time_ns;
+				int pkt_len = data_end - data;
+
+				if (elapsed_ns > XDP_FP_SEC_NS) {
+					info->bytes_count = 0;
+					info->last_time_ns = now;
+				}
+
+				info->bytes_count += pkt_len;
+
+				if (info->bytes_count > info->rate_limit) {
+					return XDP_DROP;
+				}
+			}
+
 			info->active = 1U;
 
 			/* WARNING!!! packet may be modified by xdp program after this point
@@ -590,6 +628,24 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 				goto pass;
 			}
 
+			/* Rate Limit Check */
+			if (info->rate_limit > 0) {
+				__u64 now = bpf_ktime_get_ns();
+				__u64 elapsed_ns = now - info->last_time_ns;
+				int pkt_len = data_end - data;
+
+				if (elapsed_ns > XDP_FP_SEC_NS) {
+					info->bytes_count = 0;
+					info->last_time_ns = now;
+				}
+
+				info->bytes_count += pkt_len;
+
+				if (info->bytes_count > info->rate_limit) {
+					return XDP_DROP;
+				}
+			}
+
 			info->active = 1U;
 
 			/* WARNING!!! packet may be modified by xdp program after this point
@@ -651,6 +707,24 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 				bpf_debug("%s/TCP: Invalid IP size (%u) > MTU (%u) => XDP_PASS\n",
 						module, (unsigned int)(htons(iph->total_len)), (unsigned int)(info->mtu));
 				goto pass;
+			}
+
+			/* Rate Limit Check */
+			if (info->rate_limit > 0) {
+				__u64 now = bpf_ktime_get_ns();
+				__u64 elapsed_ns = now - info->last_time_ns;
+				int pkt_len = data_end - data;
+
+				if (elapsed_ns > XDP_FP_SEC_NS) {
+					info->bytes_count = 0;
+					info->last_time_ns = now;
+				}
+
+				info->bytes_count += pkt_len;
+
+				if (info->bytes_count > info->rate_limit) {
+					return XDP_DROP;
+				}
 			}
 
 			info->active = 1U;

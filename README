@@ -417,5 +417,7 @@ You should observe the following traffic pattern in the Wireshark capture:
 - `-z`    reinitilialize statistics counters
 - `-g`    show global Fast Forward status
 - `-s`    display statistics counters
+- `-D`    dump XDP flows
+- `-l`    set rate limit of a flow
 - `-u`    load user given rules from input.txt, Applicable with -a option only.
 

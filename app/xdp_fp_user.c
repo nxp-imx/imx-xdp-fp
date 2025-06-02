@@ -80,6 +80,8 @@ static void print_usage(const char *prg)
 	fprintf(stderr, " -z    reinitilialize statistics counters \n");
 	fprintf(stderr, " -g    show global Fast Forward status \n");
 	fprintf(stderr, " -s    display statistics counters \n");
+	fprintf(stderr, " -D    dump XDP flows \n");
+	fprintf(stderr, " -l    set rate limit of a flow \n");
 	fprintf(stderr, " -u    load user given rules from input.txt, Applicable with -a option only. \n");
 	fprintf(stderr, "\n");
 }
@@ -345,6 +347,8 @@ static int update_ipv4_entries(int map_fd)
 			ipv4_value.nat_dport = htons(atoi(val));
 		else if (strcmp(key, "mtu") == 0)
 			ipv4_value.mtu = atoi(val);
+		else if (strcmp(key, "rate_limit") == 0)
+			ipv4_value.rate_limit = atoi(val);
 		else if (strcmp(key, "interface") == 0)
 			strncpy(interface_name, val, sizeof(interface_name));
 	}
@@ -418,6 +422,217 @@ static int get_device_info(char *device, unsigned char *dev_addr, int *if_index)
 	return 0;
 }
 
+void print_ip(__u32 ip)
+{
+	struct in_addr addr = { .s_addr = ip };
+
+	printf("%s", inet_ntoa(addr));
+}
+
+void dump_ipv4_flows(int ipv4_fd)
+{
+	struct ipv4_flow key = {}, next_key;
+	struct ipv4_info value;
+
+	FILE *f = fopen("ipv4_flows.txt", "w");
+	if (!f) {
+		perror("Failed to open output file");
+		return;
+	}
+
+	fprintf(f, "IPv4 Flow Table:\n");
+	fprintf(f, "-------------------------------------------------------------------------------------------------------------------------------------------\n");
+	fprintf(f, "%-15s %-10s %-15s %-10s %-7s %-15s %-15s %-13s %-13s %-7s %-12s\n",
+			"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
+			"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit");
+
+	while (bpf_map_get_next_key(ipv4_fd, &key, &next_key) == 0) {
+		if (bpf_map_lookup_elem(ipv4_fd, &next_key, &value) == 0) {
+			char saddr[INET_ADDRSTRLEN], daddr[INET_ADDRSTRLEN];
+			char nsaddr[INET_ADDRSTRLEN], ndaddr[INET_ADDRSTRLEN];
+
+			inet_ntop(AF_INET, &next_key.saddr, saddr, sizeof(saddr));
+			inet_ntop(AF_INET, &next_key.daddr, daddr, sizeof(daddr));
+			inet_ntop(AF_INET, &value.nat_saddr, nsaddr, sizeof(nsaddr));
+			inet_ntop(AF_INET, &value.nat_daddr, ndaddr, sizeof(ndaddr));
+
+			fprintf(f, "%-15s %-10u %-15s %-10u %-7u %-15s %-15s %-13u %-13u %-7u %-12lu\n",
+					saddr, ntohs(next_key.sport),
+					daddr, ntohs(next_key.dport),
+					next_key.protocol,
+					nsaddr, ndaddr,
+					ntohs(value.nat_sport), ntohs(value.nat_dport),
+					value.active, value.rate_limit);
+		}
+		key = next_key;
+	}
+	printf("Run Command to see IPv4 Flows: cat ./ipv4_flows.txt\n");
+	fclose(f);
+}
+
+void dump_ipv6_flows(int ipv6_fd)
+{
+	struct ipv6_flow key = {}, next_key;
+	struct ipv6_info value;
+
+	FILE *f = fopen("ipv6_flows.txt", "w");
+	if (!f) {
+		perror("Failed to open output file");
+		return;
+	}
+
+	fprintf(f, "IPv6 Flow Table:\n");
+	fprintf(f, "-------------------------------------------------------------------------------------------------------------------------------------------");
+	fprintf(f, "----------------------------------------------------------------------------------------------------\n");
+	fprintf(f, "%-40s %-10s %-40s %-10s %-7s %-40s %-40s %-13s %-13s %-7s %-12s\n",
+		"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
+		"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit");
+
+	while (bpf_map_get_next_key(ipv6_fd, &key, &next_key) == 0) {
+		if (bpf_map_lookup_elem(ipv6_fd, &next_key, &value) == 0) {
+			char saddr[INET6_ADDRSTRLEN], daddr[INET6_ADDRSTRLEN];
+			char nsaddr[INET6_ADDRSTRLEN], ndaddr[INET6_ADDRSTRLEN];
+
+			inet_ntop(AF_INET6, next_key.saddr, saddr, sizeof(saddr));
+			inet_ntop(AF_INET6, next_key.daddr, daddr, sizeof(daddr));
+			inet_ntop(AF_INET6, value.nat_saddr, nsaddr, sizeof(nsaddr));
+			inet_ntop(AF_INET6, value.nat_daddr, ndaddr, sizeof(ndaddr));
+
+
+			fprintf(f, "%-40s %-10u %-40s %-10u %-7u %-40s %-40s %-13u %-13u %-7u %-12lu\n",
+				saddr, ntohs(next_key.sport),
+				daddr, ntohs(next_key.dport),
+				next_key.protocol,
+				nsaddr, ndaddr,
+				ntohs(value.nat_sport), ntohs(value.nat_dport),
+				value.active, value.rate_limit);
+		}
+		key = next_key;
+	}
+	fclose(f);
+	printf("Run command to see IPv6 Flows: cat ./ipv6_flows.txt\n");
+}
+
+void set_flow_rate_limit(void)
+{
+	int version;
+	char saddr_str[INET6_ADDRSTRLEN], daddr_str[INET6_ADDRSTRLEN];
+	int sport, dport, proto;
+	__u64 rate_limit;
+	int map_fd;
+
+	printf("Select IP version (4 or 6): ");
+	if (scanf("%d", &version) != 1 || (version != 4 && version != 6)) {
+		fprintf(stderr, "Invalid IP version selected.\n");
+		return;
+	}
+
+
+	printf("Enter source IP: ");
+	if (scanf("%45s", saddr_str) != 1) {
+		fprintf(stderr, "Invalid input for source IP\n");
+		return;
+	}
+
+	printf("Enter destination IP: ");
+	if (scanf("%45s", daddr_str) != 1) {
+		fprintf(stderr, "Invalid input for destination IP\n");
+		return;
+	}
+
+	printf("Enter source port: ");
+	if (scanf("%d", &sport) != 1) {
+		fprintf(stderr, "Invalid input for source port\n");
+		return;
+	}
+
+	printf("Enter destination port: ");
+	if (scanf("%d", &dport) != 1) {
+		fprintf(stderr, "Invalid input for destination port\n");
+		return;
+	}
+
+	printf("Enter protocol (e.g., 6 for TCP, 17 for UDP): ");
+	if (scanf("%d", &proto) != 1) {
+		fprintf(stderr, "Invalid input for protocol\n");
+		return;
+	}
+
+	printf("Enter rate limit (bytes/sec): ");
+	if (scanf("%llu", &rate_limit) != 1) {
+		fprintf(stderr, "Invalid input for rate limit\n");
+		return;
+	}
+
+	if (version == 4) {
+		struct ipv4_flow flow = {};
+		struct ipv4_info info = {};
+
+		map_fd = bpf_obj_get(PINNED_IPV4);
+		if (map_fd < 0) {
+			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n", PINNED_IPV4, strerror(errno), errno);
+			return;
+		}
+
+		inet_pton(AF_INET, saddr_str, &flow.saddr);
+		inet_pton(AF_INET, daddr_str, &flow.daddr);
+		flow.sport = htons(sport);
+		flow.dport = htons(dport);
+		flow.protocol = proto;
+
+		if (bpf_map_lookup_elem(map_fd, &flow, &info) != 0) {
+			fprintf(stderr, "Flow not found, dumping all IPv4 flows:\n");
+			dump_ipv4_flows(map_fd);
+			close(map_fd);
+			return;
+		}
+
+		info.rate_limit = rate_limit;
+		info.bytes_count = 0;
+		info.last_time_ns = 0;
+
+		if (bpf_map_update_elem(map_fd, &flow, &info, BPF_ANY) != 0) {
+			perror("Failed to update IPv4 flow info");
+		} else {
+			printf("Rate limit set to %llu bytes/sec for IPv4 flow\n", rate_limit);
+		}
+	} else {
+		struct ipv6_flow flow = {};
+		struct ipv6_info info = {};
+
+		map_fd = bpf_obj_get(PINNED_IPV6);
+		if (map_fd < 0) {
+			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n", PINNED_IPV6, strerror(errno), errno);
+			return;
+		}
+
+		inet_pton(AF_INET6, saddr_str, flow.saddr);
+		inet_pton(AF_INET6, daddr_str, flow.daddr);
+		flow.sport = htons(sport);
+		flow.dport = htons(dport);
+		flow.protocol = proto;
+
+		if (bpf_map_lookup_elem(map_fd, &flow, &info) != 0) {
+			fprintf(stderr, "Flow not found, dumping all IPv6 flows:\n");
+			dump_ipv6_flows(map_fd);
+			close(map_fd);
+			return;
+		}
+
+		info.rate_limit = rate_limit;
+		info.bytes_count = 0;
+		info.last_time_ns = 0;
+
+		if (bpf_map_update_elem(map_fd, &flow, &info, BPF_ANY) != 0) {
+			perror("Failed to update IPv6 flow info");
+		} else {
+			printf("Rate limit set to %llu bytes/sec for IPv6 flow\n", rate_limit);
+		}
+    }
+
+    close(map_fd);
+}
+
 int main(int argc, char **argv)
 {
 	const char *prog_name = "xdp_fp";
@@ -444,7 +659,7 @@ int main(int argc, char **argv)
 	int globals_key;
 	unsigned int nr_cpus = sysconf(_SC_NPROCESSORS_CONF);
 
-	while ((opt = getopt(argc, argv, "dauSFzserghb")) != -1) {
+	while ((opt = getopt(argc, argv, "dauSFzserghblD")) != -1) {
 		switch (opt) {
 			case 'd':
 				attach = 0;
@@ -488,6 +703,27 @@ int main(int argc, char **argv)
 				break;
 			case 'h':
 				print_usage(basename(argv[0]));
+				return 1;
+			case 'D':
+				ipv4_fd = bpf_obj_get(PINNED_IPV4);
+				if (ipv4_fd < 0) {
+					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+						PINNED_IPV4, strerror(errno), errno);
+					return 1;
+				}
+				dump_ipv4_flows(ipv4_fd);
+				close(ipv4_fd);
+				ipv6_fd = bpf_obj_get(PINNED_IPV6);
+				if (ipv6_fd < 0) {
+					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+						PINNED_IPV6, strerror(errno), errno);
+					return 1;
+				}
+				dump_ipv6_flows(ipv6_fd);
+				close(ipv4_fd);
+				return 1;
+			case 'l':
+				set_flow_rate_limit();
 				return 1;
 			default:
 				print_usage(basename(argv[0]));
@@ -640,6 +876,12 @@ stats:
 	if (fd_globals < 0) {
 		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
 				PINNED_GLOBALS, strerror(errno), errno);
+		exit(EXIT_FAILURE);
+	}
+	ipv4_fd = bpf_obj_get(PINNED_IPV4);
+	if (ipv4_fd < 0) {
+		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+				PINNED_IPV4, strerror(errno), errno);
 		exit(EXIT_FAILURE);
 	}
 
