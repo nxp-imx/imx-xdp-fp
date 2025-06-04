@@ -513,6 +513,44 @@ void dump_ipv6_flows(int ipv6_fd)
 	printf("Run command to see IPv6 Flows: cat ./ipv6_flows.txt\n");
 }
 
+void dump_fp_routes(int fp_route_fd)
+{
+    int key = 0;
+    struct route value;
+
+    FILE *f = fopen("fp_routes.txt", "w");
+    if (!f) {
+        perror("Failed to open output file");
+        return;
+    }
+
+    fprintf(f, "Fast Path Route Table:\n");
+    fprintf(f, "-------------------------------------------------------------------------------------------------------------\n");
+    fprintf(f, "%-10s %-15s %-10s %-6s %-6s %-20s\n",
+            "Key", "Flags", "IfIndex", "MTU", "Type", "L2 Header (MAC)");
+
+    for (key = 0; key < MAX_FP_ROUTES; key++) {
+        if (bpf_map_lookup_elem(fp_route_fd, &key, &value) == 0) {
+            if (value.redir_ifindex == 0 && value.l2_hdr_size == 0)
+                continue;
+
+            fprintf(f, "%-10d 0x%-13x %-10d %-6u %-6u ",
+                    key, value.flags, value.redir_ifindex,
+                    value.mtu, value.redir_if_type);
+
+            for (int i = 0; i < value.l2_hdr_size && i < MAX_L2_HEADER_SIZE; i++) {
+                fprintf(f, "%02x", value.l2_hdr[i]);
+                if (i < value.l2_hdr_size - 1)
+                    fprintf(f, ":");
+            }
+            fprintf(f, "\n");
+        }
+    }
+
+    fclose(f);
+    printf("Run Command to see Fast Path Routes: cat ./fp_routes.txt\n");
+}
+
 void set_flow_rate_limit(void)
 {
 	int version;
@@ -721,7 +759,15 @@ int main(int argc, char **argv)
 					return 1;
 				}
 				dump_ipv6_flows(ipv6_fd);
-				close(ipv4_fd);
+				close(ipv6_fd);
+				route_fd = bpf_obj_get(PINNED_ROUTE);
+				if (route_fd < 0) {
+					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+						PINNED_ROUTE, strerror(errno), errno);
+					return 1;
+				}
+				dump_fp_routes(route_fd);
+				close(route_fd);
 				return 1;
 			case 'l':
 				set_flow_rate_limit();
