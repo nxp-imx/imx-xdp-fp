@@ -441,10 +441,10 @@ void dump_ipv4_flows(int ipv4_fd)
 	}
 
 	fprintf(f, "IPv4 Flow Table:\n");
-	fprintf(f, "-------------------------------------------------------------------------------------------------------------------------------------------\n");
-	fprintf(f, "%-15s %-10s %-15s %-10s %-7s %-15s %-15s %-13s %-13s %-7s %-12s\n",
-			"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
-			"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit");
+	fprintf(f, "------------------------------------------------------------------------------------------------------------------------------------------------------\n");
+	fprintf(f, "%-15s %-10s %-15s %-10s %-7s %-15s %-15s %-13s %-13s %-7s %-12s %-10s\n",
+		"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
+		"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit", "Route Key");
 
 	while (bpf_map_get_next_key(ipv4_fd, &key, &next_key) == 0) {
 		if (bpf_map_lookup_elem(ipv4_fd, &next_key, &value) == 0) {
@@ -456,16 +456,18 @@ void dump_ipv4_flows(int ipv4_fd)
 			inet_ntop(AF_INET, &value.nat_saddr, nsaddr, sizeof(nsaddr));
 			inet_ntop(AF_INET, &value.nat_daddr, ndaddr, sizeof(ndaddr));
 
-			fprintf(f, "%-15s %-10u %-15s %-10u %-7u %-15s %-15s %-13u %-13u %-7u %-12lu\n",
-					saddr, ntohs(next_key.sport),
-					daddr, ntohs(next_key.dport),
-					next_key.protocol,
-					nsaddr, ndaddr,
-					ntohs(value.nat_sport), ntohs(value.nat_dport),
-					value.active, value.rate_limit);
+		fprintf(f, "%-15s %-10u %-15s %-10u %-7u %-15s %-15s %-13u %-13u %-7u %-12lu %-10d\n",
+				saddr, ntohs(next_key.sport),
+				daddr, ntohs(next_key.dport),
+				next_key.protocol,
+				nsaddr, ndaddr,
+				ntohs(value.nat_sport), ntohs(value.nat_dport),
+				value.active, value.rate_limit,
+				value.route_ifindex);
 		}
 		key = next_key;
 	}
+
 	printf("Run Command to see IPv4 Flows: cat ./ipv4_flows.txt\n");
 	fclose(f);
 }
@@ -484,9 +486,9 @@ void dump_ipv6_flows(int ipv6_fd)
 	fprintf(f, "IPv6 Flow Table:\n");
 	fprintf(f, "-------------------------------------------------------------------------------------------------------------------------------------------");
 	fprintf(f, "----------------------------------------------------------------------------------------------------\n");
-	fprintf(f, "%-40s %-10s %-40s %-10s %-7s %-40s %-40s %-13s %-13s %-7s %-12s\n",
-		"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
-		"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit");
+	fprintf(f, "%-40s %-10s %-40s %-10s %-7s %-40s %-40s %-13s %-13s %-7s %-12s %-10s\n",
+			"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
+			"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit", "Route Key");
 
 	while (bpf_map_get_next_key(ipv6_fd, &key, &next_key) == 0) {
 		if (bpf_map_lookup_elem(ipv6_fd, &next_key, &value) == 0) {
@@ -498,17 +500,18 @@ void dump_ipv6_flows(int ipv6_fd)
 			inet_ntop(AF_INET6, value.nat_saddr, nsaddr, sizeof(nsaddr));
 			inet_ntop(AF_INET6, value.nat_daddr, ndaddr, sizeof(ndaddr));
 
-
-			fprintf(f, "%-40s %-10u %-40s %-10u %-7u %-40s %-40s %-13u %-13u %-7u %-12lu\n",
+			fprintf(f, "%-40s %-10u %-40s %-10u %-7u %-40s %-40s %-13u %-13u %-7u %-12lu %-10d\n",
 				saddr, ntohs(next_key.sport),
 				daddr, ntohs(next_key.dport),
 				next_key.protocol,
 				nsaddr, ndaddr,
 				ntohs(value.nat_sport), ntohs(value.nat_dport),
-				value.active, value.rate_limit);
+				value.active, value.rate_limit,
+				value.route_ifindex);
 		}
 		key = next_key;
 	}
+
 	fclose(f);
 	printf("Run command to see IPv6 Flows: cat ./ipv6_flows.txt\n");
 }
@@ -527,7 +530,7 @@ void dump_fp_routes(int fp_route_fd)
     fprintf(f, "Fast Path Route Table:\n");
     fprintf(f, "-------------------------------------------------------------------------------------------------------------\n");
     fprintf(f, "%-10s %-15s %-10s %-6s %-6s %-20s\n",
-            "Key", "Flags", "IfIndex", "MTU", "Type", "L2 Header (MAC)");
+            "Key", "Flags", "IfIndex", "MTU", "Type", "L2 Header (DEST_MAC SRC_MAC)");
 
     for (key = 0; key < MAX_FP_ROUTES; key++) {
         if (bpf_map_lookup_elem(fp_route_fd, &key, &value) == 0) {
@@ -538,9 +541,15 @@ void dump_fp_routes(int fp_route_fd)
                     key, value.flags, value.redir_ifindex,
                     value.mtu, value.redir_if_type);
 
-            for (int i = 0; i < value.l2_hdr_size && i < MAX_L2_HEADER_SIZE; i++) {
+            for (int i = 0; i < 6 && i < MAX_L2_HEADER_SIZE; i++) {
                 fprintf(f, "%02x", value.l2_hdr[i]);
-                if (i < value.l2_hdr_size - 1)
+                if (i < 5 && i < value.l2_hdr_size - 1)
+                    fprintf(f, ":");
+            }
+            fprintf(f, " ");
+            for (int i = 6; i < 12 && i < MAX_L2_HEADER_SIZE; i++) {
+                fprintf(f, "%02x", value.l2_hdr[i]);
+                if (i < 11 && i < value.l2_hdr_size - 1)
                     fprintf(f, ":");
             }
             fprintf(f, "\n");
