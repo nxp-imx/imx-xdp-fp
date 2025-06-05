@@ -42,6 +42,9 @@
 #define PINNED_ROUTE "/sys/fs/bpf/fp_route"
 #define PINNED_MAC_PORT "/sys/fs/bpf/fp_mac_to_port"
 #define PINNED_PORT "/sys/fs/bpf/fp_tx_ports"
+#define PINNED_NAT64_IP6_IP4 "/sys/fs/bpf/nat64_ip6_ip4_src_map"
+#define PINNED_NAT64_IP4_IP6 "/sys/fs/bpf/nat64_ip4_ip6_src_route_map"
+#define PINNED_NAT64_DST_ROUTE "/sys/fs/bpf/nat64_dst_ip_route_map"
 
 #define ETH_ALEN    6
 #define PROTO_VLAN 0x8100
@@ -560,6 +563,111 @@ void dump_fp_routes(int fp_route_fd)
     printf("Run Command to see Fast Path Routes: cat ./fp_routes.txt\n");
 }
 
+
+void dump_nat64_ip6_ip4_src_map() {
+    int map_fd = bpf_obj_get(PINNED_NAT64_IP6_IP4);
+    if (map_fd < 0) {
+        perror("Failed to open nat64_ip6_ip4_src_map");
+        return;
+    }
+
+    FILE *f = fopen("nat64_ip6_ip4_src_map.txt", "w");
+    if (!f) {
+        perror("Failed to open output file");
+        return;
+    }
+
+    struct in6_addr key = {}, next_key;
+    __be32 value;
+    char ip6_str[INET6_ADDRSTRLEN], ip4_str[INET_ADDRSTRLEN];
+
+    fprintf(f, "NAT64 IPv6 to IPv4 Source Map:\n");
+    fprintf(f, "-------------------------------------------------------------\n");
+    fprintf(f, "%-40s %-15s\n", "IPv6 Address", "IPv4 Address");
+
+    while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
+        if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
+            inet_ntop(AF_INET6, &next_key, ip6_str, sizeof(ip6_str));
+            inet_ntop(AF_INET, &value, ip4_str, sizeof(ip4_str));
+            fprintf(f, "%-40s %-15s\n", ip6_str, ip4_str);
+        }
+        key = next_key;
+    }
+
+    fclose(f);
+    printf("Run to view: cat nat64_ip6_ip4_src_map.txt\n");
+}
+
+void dump_nat64_ip4_ip6_src_route_map() {
+    int map_fd = bpf_obj_get(PINNED_NAT64_IP4_IP6);
+    if (map_fd < 0) {
+        perror("Failed to open nat64_ip4_ip6_src_route_map");
+        return;
+    }
+
+    FILE *f = fopen("nat64_ip4_ip6_src_route_map.txt", "w");
+    if (!f) {
+        perror("Failed to open output file");
+        return;
+    }
+
+    __be32 key = 0, next_key;
+    struct {
+        struct in6_addr ip6;
+        __u32 route_id;
+    } value;
+    char ip4_str[INET_ADDRSTRLEN], ip6_str[INET6_ADDRSTRLEN];
+
+    fprintf(f, "NAT64 IPv4 to IPv6 + Route Map:\n");
+    fprintf(f, "----------------------------------------------------------------------------------\n");
+    fprintf(f, "%-15s %-40s %-10s\n", "IPv4 Address", "IPv6 Address", "Route ID");
+
+    while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
+        if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
+            inet_ntop(AF_INET, &next_key, ip4_str, sizeof(ip4_str));
+            inet_ntop(AF_INET6, &value.ip6, ip6_str, sizeof(ip6_str));
+            fprintf(f, "%-15s %-40s %-10u\n", ip4_str, ip6_str, value.route_id);
+        }
+        key = next_key;
+    }
+
+    fclose(f);
+    printf("Run to view: cat nat64_ip4_ip6_src_route_map.txt\n");
+}
+
+void dump_nat64_dst_ip_route_map() {
+    int map_fd = bpf_obj_get(PINNED_NAT64_DST_ROUTE);
+    if (map_fd < 0) {
+        perror("Failed to open nat64_dst_ip_route_map");
+        return;
+    }
+
+    FILE *f = fopen("nat64_dst_ip_route_map.txt", "w");
+    if (!f) {
+        perror("Failed to open output file");
+        return;
+    }
+
+    __be32 key = 0, next_key;
+    __u32 value;
+    char ip4_str[INET_ADDRSTRLEN];
+
+    fprintf(f, "NAT64 Destination IP to Route Map:\n");
+    fprintf(f, "---------------------------------------------\n");
+    fprintf(f, "%-15s %-10s\n", "IPv4 Address", "Route ID");
+
+    while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
+        if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
+            inet_ntop(AF_INET, &next_key, ip4_str, sizeof(ip4_str));
+            fprintf(f, "%-15s %-10u\n", ip4_str, value);
+        }
+        key = next_key;
+    }
+
+    fclose(f);
+    printf("Run to view: cat nat64_dst_ip_route_map.txt\n");
+}
+
 void set_flow_rate_limit(void)
 {
 	int version;
@@ -680,13 +788,128 @@ void set_flow_rate_limit(void)
     close(map_fd);
 }
 
+#define MAX_ENTRIES 1000
+struct ip6_route_info {
+	struct in6_addr ip6;
+	__u32 route_id;
+};
+
+struct ip6_ip4_pair {
+	struct in6_addr ip6;
+	__be32 ip4;
+};
+
+struct ip4_route {
+	__be32 ip4;
+	__u32 route_id;
+};
+
+static int
+load_config_and_populate_maps(int map_fd_ip6_ip4, int map_fd_ip4_ip6_route, int map_fd_dst_ip_route, int map_fd_route_map, const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Failed to open config file");
+        return 1;
+    }
+
+    char line[256], section[32] = "";
+    struct ip6_ip4_pair ip6_ip4_list[MAX_ENTRIES];
+    struct ip4_route ip4_route_list[MAX_ENTRIES];
+    int ip6_ip4_count = 0, ip4_route_count = 0;
+
+    while (fgets(line, sizeof(line), file)) {
+        if (line[0] == '#') continue;
+        if (strstr(line, "SRC_IP6-IP4:")) { strcpy(section, "SRC_IP6-IP4"); continue; }
+        if (strstr(line, "SRC_IP_ROUTE:")) { strcpy(section, "SRC_IP_ROUTE"); continue; }
+        if (strstr(line, "DST_IP_ROUTE:")) { strcpy(section, "DST_IP_ROUTE"); continue; }
+	if (strstr(line, "ROUTE_MAP:")) { strcpy(section, "ROUTE_MAP"); continue; }
+
+        if (strlen(line) < 3) continue;
+
+        if (strcmp(section, "SRC_IP6-IP4") == 0) {
+            char ip6_str[64], ip4_str[32];
+            sscanf(line, "%s %s", ip6_str, ip4_str);
+            inet_pton(AF_INET6, ip6_str, &ip6_ip4_list[ip6_ip4_count].ip6);
+            inet_pton(AF_INET, ip4_str, &ip6_ip4_list[ip6_ip4_count].ip4);
+            bpf_map_update_elem(map_fd_ip6_ip4, &ip6_ip4_list[ip6_ip4_count].ip6, &ip6_ip4_list[ip6_ip4_count].ip4, BPF_ANY);
+            ip6_ip4_count++;
+        } else if (strcmp(section, "SRC_IP_ROUTE") == 0) {
+            char ip4_str[32];
+            __u32 route_id;
+            sscanf(line, "%s %u", ip4_str, &route_id);
+            inet_pton(AF_INET, ip4_str, &ip4_route_list[ip4_route_count].ip4);
+            ip4_route_list[ip4_route_count].route_id = route_id;
+            ip4_route_count++;
+        } else if (strcmp(section, "DST_IP_ROUTE") == 0) {
+            char ip4_str[32];
+            __u32 route_id;
+            __be32 ip4;
+            sscanf(line, "%s %u", ip4_str, &route_id);
+            inet_pton(AF_INET, ip4_str, &ip4);
+            bpf_map_update_elem(map_fd_dst_ip_route, &ip4, &route_id, BPF_ANY);
+        } else if (strcmp(section, "ROUTE_MAP") == 0) {
+		__u32 route_id;
+		char ifname[IF_NAMESIZE];
+		__u16 mtu;
+		struct route route_entry;
+		int ifindex, ret;
+		char dst_mac_str[18]; // "00:10:94:00:00:02"
+		unsigned char src_mac_str[18]; // "00:10:94:00:00:02"
+
+	    sscanf(line, "%u %s %hu %17s", &route_id, ifname, &mtu, dst_mac_str);
+	    ret = get_device_info(ifname, src_mac_str, &ifindex);
+	    if (ret) {
+	    	perror("Failed to get device info\n");
+		return ret;
+	    }
+
+	    route_entry.l2_hdr_size = 2*ETH_ALEN;
+	    unsigned int mac[6];
+	if (sscanf(dst_mac_str, "%x:%x:%x:%x:%x:%x",
+        	   &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
+	    fprintf(stderr, "Invalid MAC address format: %s\n", dst_mac_str);
+	    continue;
+	}
+
+	for (int i = 0; i < ETH_ALEN; i++) {
+		    route_entry.l2_hdr[i] = (uint8_t)mac[i];
+	}
+
+ 	    memcpy(route_entry.l2_hdr + ETH_ALEN, src_mac_str, ETH_ALEN);
+
+            route_entry.flags = 0;
+            route_entry.redir_ifindex = ifindex;
+            route_entry.mtu = mtu;
+            route_entry.redir_if_type = 1;
+
+            bpf_map_update_elem(map_fd_route_map, &route_id, &route_entry, BPF_ANY);
+        }
+    }
+
+    // Populate reverse map
+    for (int i = 0; i < ip6_ip4_count; i++) {
+        for (int j = 0; j < ip4_route_count; j++) {
+            if (ip6_ip4_list[i].ip4 == ip4_route_list[j].ip4) {
+                struct ip6_route_info value = {
+                    .ip6 = ip6_ip4_list[i].ip6,
+                    .route_id = ip4_route_list[j].route_id
+                };
+                bpf_map_update_elem(map_fd_ip4_ip6_route, &ip6_ip4_list[i].ip4, &value, BPF_ANY);
+            }
+        }
+    }
+
+    fclose(file);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
 	const char *prog_name = "xdp_fp";
-	struct bpf_program *prog = NULL;
+	struct bpf_program *prog = NULL, *nat64_prog = NULL, *nat46_prog = NULL;
 	struct bpf_program *pos;
 	const char *sec_name;
-	int prog_fd = -1;
+	int prog_fd = -1, nat64_fd = -1, nat46_fd = -1;
 	char filename[PATH_MAX];
 	struct bpf_object *obj;
 	int opt, i, idx, err, icount = 0;
@@ -694,7 +917,9 @@ int main(int argc, char **argv)
 	int ret = -1;
 	__u32 port_key = -1, port_value = -1;
 
-	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1, port_fd = -1;
+	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1, port_fd = -1, modules_fd = -1;
+	int  nat64_ip6_ip4_fd = -1, nat64_ip4_ip6_fd = -1, nat64_dst_fd = -1;
+
 	char fif[MAX_IF_NAME_LEN];
 
 	int reset_stat = 0, print_stat = 0, ff_disabled = 0, ff_status, show_globals = 0,
@@ -706,7 +931,7 @@ int main(int argc, char **argv)
 	int globals_key;
 	unsigned int nr_cpus = sysconf(_SC_NPROCESSORS_CONF);
 
-	while ((opt = getopt(argc, argv, "dauSFzserghblD")) != -1) {
+	while ((opt = getopt(argc, argv, "dauSFzserghblDP")) != -1) {
 		switch (opt) {
 			case 'd':
 				attach = 0;
@@ -777,6 +1002,46 @@ int main(int argc, char **argv)
 				}
 				dump_fp_routes(route_fd);
 				close(route_fd);
+    				dump_nat64_ip6_ip4_src_map();
+				    dump_nat64_ip4_ip6_src_route_map();
+				    dump_nat64_dst_ip_route_map();
+				return 1;
+			case 'P':
+				nat64_ip6_ip4_fd = bpf_obj_get(PINNED_NAT64_IP6_IP4);
+				if (nat64_ip6_ip4_fd < 0) {
+					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+						PINNED_NAT64_IP6_IP4, strerror(errno), errno);
+					return 1;
+				}
+				nat64_ip4_ip6_fd = bpf_obj_get(PINNED_NAT64_IP4_IP6);
+				if (nat64_ip4_ip6_fd < 0) {
+					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+						PINNED_NAT64_IP4_IP6, strerror(errno), errno);
+					close(nat64_ip6_ip4_fd);
+					return 1;
+				}
+				nat64_dst_fd = bpf_obj_get(PINNED_NAT64_DST_ROUTE);
+				if (nat64_dst_fd < 0) {
+					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+						PINNED_NAT64_DST_ROUTE, strerror(errno), errno);
+					close(nat64_ip6_ip4_fd);
+					close(nat64_ip4_ip6_fd);
+					return 1;
+				}
+				route_fd = bpf_obj_get(PINNED_ROUTE);
+				if (route_fd < 0) {
+					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+						PINNED_ROUTE, strerror(errno), errno);
+					close(nat64_ip6_ip4_fd);
+					close(nat64_ip4_ip6_fd);
+					close(nat64_dst_fd);
+					return 1;
+				}
+				load_config_and_populate_maps(nat64_ip6_ip4_fd, nat64_ip4_ip6_fd, nat64_dst_fd, route_fd, "./config.txt");
+				close(nat64_ip6_ip4_fd);
+				close(nat64_ip4_ip6_fd);
+				close(nat64_dst_fd);
+				close(route_fd);
 				return 1;
 			case 'l':
 				set_flow_rate_limit();
@@ -827,9 +1092,17 @@ int main(int argc, char **argv)
 
 		bpf_object__for_each_program(pos, obj) {
 			sec_name = bpf_program__section_name(pos);
-			if (sec_name && !strcmp(sec_name, prog_name)) {
+			if (!prog && sec_name && !strcmp(sec_name, prog_name)) {
 				prog = pos;
-				break;
+				//break;
+			}
+			if (!nat64_prog && sec_name && !strcmp(sec_name, "nat64_siit")) {
+				nat64_prog = pos;
+				//break;
+			}
+			if (!nat46_prog && sec_name && !strcmp(sec_name, "nat46_siit")) {
+				nat46_prog = pos;
+				//break;
 			}
 		}
 		prog_fd = bpf_program__fd(prog);
@@ -837,8 +1110,38 @@ int main(int argc, char **argv)
 			printf("program not found: %s\n", strerror(prog_fd));
 			return 1;
 		}
+#if 1
+		nat64_fd = bpf_program__fd(nat64_prog);
+		if (nat64_fd < 0) {
+			printf("program not found: %s\n", strerror(nat64_fd));
+			return 1;
+		}
+		nat46_fd = bpf_program__fd(nat46_prog);
+		if (nat46_fd < 0) {
+			printf("program not found: %s\n", strerror(nat46_fd));
+			return 1;
+		}
 
 		// Get port map FD
+		modules_fd = bpf_object__find_map_fd_by_name(obj, "fp_modules");
+		if (modules_fd < 0) {
+			printf("bpf_object__find_map_fd_by_name failed for fp_modules");
+			goto out;
+		}
+
+		int modules_key =  XDP_NAT64_SIIT;
+		err = bpf_map_update_elem(modules_fd, &modules_key, &nat64_fd, BPF_ANY);
+		if (err) {
+			fprintf(stderr, "Update modules_fd fails\n");
+			goto out;
+		}
+		modules_key =  XDP_NAT46_SIIT;
+		err = bpf_map_update_elem(modules_fd, &modules_key, &nat46_fd, BPF_ANY);
+		if (err) {
+			fprintf(stderr, "Update modules_fd fails\n");
+			goto out;
+		}
+#endif
 		port_fd = bpf_object__find_map_fd_by_name(obj, "fp_tx_ports");
 		if (port_fd < 0) {
 			printf("bpf_object__find_map_fd_by_name failed for fp_tx_ports");
@@ -858,7 +1161,6 @@ int main(int argc, char **argv)
 					PINNED_ROUTE, strerror(errno), errno);
 			goto out;
 		}
-
 	}
 
 	for (i = optind; i < argc; ++i) {

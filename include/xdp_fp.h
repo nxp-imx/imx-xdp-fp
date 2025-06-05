@@ -7,6 +7,8 @@
 #define _XDP_FP_H
 #include "types.h"
 
+#define XDP_FP_SEC_NS   1000000000
+
 #ifndef __stringify
 # define __stringify(X)		#X
 #endif

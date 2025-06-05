@@ -8,6 +8,14 @@
 
 #include "types.h"
 
+#define XDP_NAT64_SIIT	1
+#define XDP_NAT46_SIIT	2
+
+#define MAX_EXT_HEADERS		16U
+#define IPV6_HEADER_LENGTH	40U
+#define IPV4_HEADER_LENGTH	20U
+#define NAT64_PREFIX 0x0064ff9b  // 64:ff9b::/96 in hex
+
 #define MAX_IPV4_ENTRIES	512
 #define MAX_IPV6_ENTRIES	512
 #define MAX_FP_ROUTES		512

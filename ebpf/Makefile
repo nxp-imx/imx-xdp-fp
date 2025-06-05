@@ -8,26 +8,33 @@ clang ?= clang --sysroot=$(SDKTARGETSYSROOT)
 INSTALLDIR ?= ../deploy_xdp
 
 CL_FLAGS := -g -O3 -emit-llvm -target bpf -D__aarch64__ -D__KERNEL__ -D__BPF__ -Wall
-
+CL_FLAGS += -I../include
 
 C_FLAGS := -Wall
-CL_FLAGS += -I../include
-C_FLAGS += -I../include/	
+C_FLAGS += -I../include/
 L_FLAGS := -lzstd -lz -lelf -lbpf
 
 TARGETPROG := xdp_fp_kern.o
 
 INSTALL := install
 
+# Intermediate files
+BC_FILES := xdp_fp_kern.bc xdp_fp_nat64.bc
+LINKED_BC := linked_xdp.bc
+
 all: $(TARGETPROG)
-$(TARGETPROG): xdp_fp_kern.bc
+
+$(TARGETPROG): $(LINKED_BC)
 	$(llc) $^ -march=bpf -filetype=obj -o $@
 
-xdp_fp_kern.bc: xdp_fp_kern.c
+$(LINKED_BC): $(BC_FILES)
+	llvm-link -o $@ $^
+
+%.bc: %.c
 	$(clang) $(CLANG_FLAGS) $(CL_FLAGS) -c $< -o $@
 
 install: all
 	$(INSTALL) -D -m 644 $(TARGETPROG) $(INSTALLDIR)/$(TARGETPROG)
+
 clean:
-	rm -f *.o
-	rm -f *.bc
+	rm -f *.o *.bc linked_xdp.bc

@@ -8,6 +8,9 @@
 #include <linux/if_packet.h>
 #include <linux/if_vlan.h>
 #include <linux/ipv6.h>
+#include <linux/ip.h>
+#include <linux/icmp.h>
+#include <linux/icmpv6.h>
 
 #include <bpf/bpf_helpers.h>
 
@@ -15,98 +18,22 @@
 #include "xdp_fp.h"
 #include "xdp_fp_common.h"
 #include "ipv4.h"
+#include "vlan.h"
+#include "csum.h"
 #include "transport.h"
+#include "xdp_fp_maps.h"
 
-struct vlan_hdr {
-        __be16  h_vlan_TCI;
-        __be16  h_vlan_encapsulated_proto;
-};
-
-struct vlan_ethhdr {
-	unsigned char   h_dest[ETH_ALEN];
-	unsigned char   h_source[ETH_ALEN];
-	__be16      h_vlan_proto;
-	__be16      h_vlan_TCI;
-	__be16      h_vlan_encapsulated_proto;
-};
-
-#define MAX_MODULES     6
-#define MAX_CPUS        6
-#define PIN_GLOBAL_NS   2
-#define ETHER_ADDR_LEN 6
-
-#define ETHERTYPE_IPV4                  0x0800
-#define ETHERTYPE_IPV6                  0x86DD
-#define ETHERTYPE_VLAN                  0x8100
-#define ETHERTYPE_VLAN_STAG		0x88a8
-
-#define NEXTHDR_UDP     17
-#define NEXTHDR_TCP     6
-#define NEXTHDR_ROUTING 43
-#define NEXTHDR_HOP     0
-#define NEXTHDR_DEST    60
-#define MAX_EXT_HEADERS 16U
-#define IPV6_VERSION    6U
-#define IPV6_HEADER_LENGTH 40U
-#define XDP_FP_SEC_NS   1000000000
-
-struct {
-	__uint(type,BPF_MAP_TYPE_ARRAY);
-	__uint(key_size,sizeof(u32));
-	__uint(value_size,sizeof(u32));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries,MAX_MODULES);
-} fp_modules SEC(".maps");
-
-struct {
-	__uint(type,BPF_MAP_TYPE_ARRAY);
-	__uint(key_size,sizeof(int));
-	__uint(value_size,sizeof(int));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries,GLOB_MAX);
-} fp_globals SEC(".maps");
-
-/* packets forwarding statistics map */
-struct {
-	__uint(type,BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(key_size,sizeof(int));
-	__uint(value_size,sizeof(struct stats_entry));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries,MAX_CPUS);
-} fp_stats SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(key_size,sizeof(struct ipv4_flow));
-	__uint(value_size,sizeof(struct ipv4_info));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries,MAX_IPV4_ENTRIES);
-} fp_ipv4 SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(key_size,sizeof(struct ipv6_flow));
-	__uint(value_size,sizeof(struct ipv6_info));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries,MAX_IPV6_ENTRIES);
-} fp_ipv6 SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(key_size, ETH_ALEN);
-	__uint(value_size, sizeof(int));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries, MAX_MAC_ADDR);
-} fp_mac_to_port SEC(".maps");
-
-
-struct {
-	__uint(type, BPF_MAP_TYPE_DEVMAP);
-	__uint(key_size, sizeof(__u32));
-	__uint(value_size, sizeof(__u32));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries, MAX_PORT);
-} fp_tx_ports SEC(".maps");
+struct xdp_fp_modules fp_modules SEC(".maps");
+struct xdp_fp_globals fp_globals SEC(".maps");
+struct xdp_fp_stats fp_stats SEC(".maps");
+struct xdp_fp_ipv4 fp_ipv4 SEC(".maps");
+struct xdp_fp_ipv6 fp_ipv6 SEC(".maps");
+struct xdp_fp_mac_to_port fp_mac_to_port SEC(".maps");
+struct xdp_fp_tx_ports fp_tx_ports SEC(".maps");
+struct xdp_fp_route fp_route SEC(".maps");
+struct xdp_nat64_ip6_ip4_src_map nat64_ip6_ip4_src_map SEC(".maps");
+struct xdp_nat64_ip4_ip6_src_route_map nat64_ip4_ip6_src_route_map SEC(".maps");
+struct xdp_nat64_dst_ip_route_map nat64_dst_ip_route_map SEC(".maps");
 
 static void __always_inline ipv6_copy(u32 *a, u32 *b)
 {
@@ -115,14 +42,6 @@ static void __always_inline ipv6_copy(u32 *a, u32 *b)
 	a[2] = b[2];
 	a[3] = b[3];
 }
-
-struct {
-	__uint(type,BPF_MAP_TYPE_ARRAY);
-	__uint(key_size,sizeof(int));
-	__uint(value_size,sizeof(struct route));
-	__uint(pinning,LIBBPF_PIN_BY_NAME);
-	__uint(max_entries,MAX_FP_ROUTES);
-} fp_route SEC(".maps");
 
 static __always_inline int prepare_transmit(struct xdp_md *ctx)
 {
@@ -171,8 +90,8 @@ static __always_inline int prepare_transmit(struct xdp_md *ctx)
 
 	h_proto = eth->h_proto;
 
-	if (h_proto == htons(ETHERTYPE_VLAN) ||
-			h_proto == htons(ETHERTYPE_VLAN_STAG)) {
+	if (h_proto == htons(ETH_P_8021Q) ||
+			h_proto == htons(ETH_P_8021AD)) {
 		nh_off += sizeof(struct vlan_hdr);
 	}
 
@@ -201,16 +120,16 @@ static __always_inline int prepare_transmit(struct xdp_md *ctx)
 		}
 
 		/* Copy full ethernet header (without the 2 bytes ether_type) */
-		__builtin_memcpy(data, route->l2_hdr, (unsigned int)(2 * ETHER_ADDR_LEN));
+		__builtin_memcpy(data, route->l2_hdr, (unsigned int)(2 * ETH_ALEN));
 		/* Copy VLAN info in Ethernet header if present */
-		if (route->l2_hdr_size > (u16)(2 * ETHER_ADDR_LEN)) {
-			__builtin_memcpy(data + 2 * ETHER_ADDR_LEN,
-					&route->l2_hdr[2 * ETHER_ADDR_LEN], sizeof(struct vlan_hdr));
+		if (route->l2_hdr_size > (u16)(2 * ETH_ALEN)) {
+			__builtin_memcpy(data + 2 * ETH_ALEN,
+					&route->l2_hdr[2 * ETH_ALEN], sizeof(struct vlan_hdr));
 			/* Keep 2 bytes ether_type as per original ethernet data received */
 			bpf_debug("%s: VLAN TPID(%x) VLAN TCI(%u)\n",
 					module,
-					htons(*(u16 *)(data + 2 * ETHER_ADDR_LEN)),
-					htons(*((u16 *)(data + 2 * ETHER_ADDR_LEN) + 1)));
+					htons(*(u16 *)(data + 2 * ETH_ALEN)),
+					htons(*((u16 *)(data + 2 * ETH_ALEN) + 1)));
 		}
 	}
 	else if (route->redir_if_type == ARPHRD_RAWIP) {
@@ -288,8 +207,8 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 
 	h_proto = eth->h_proto;
 
-	if (h_proto == htons(ETHERTYPE_VLAN) ||
-			h_proto == htons(ETHERTYPE_VLAN_STAG)) {
+	if (h_proto == htons(ETH_P_8021Q) ||
+			h_proto == htons(ETH_P_8021AD)) {
 		nh_off += sizeof(struct vlan_hdr);
 		if (data + nh_off > data_end) {
 			bpf_debug("%s/VLAN: Invalid data(%p) + nh_off > data_end(%p) => XDP_PASS\n",
@@ -318,15 +237,23 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 		goto pass;
 	}
 
+        // Check if destination is NAT64 prefix
+        if ((iph->daddr.s6_addr32[0] == __constant_htonl(NAT64_PREFIX)) &&
+            (iph->daddr.s6_addr32[1] == 0) &&
+            (iph->daddr.s6_addr32[2] == 0)) {
+		bpf_tail_call(ctx, &fp_modules, XDP_NAT64_SIIT);
+		return XDP_PASS; // fallback
+	}
+
 	protocol = iph->nexthdr;
 
-	if (protocol == NEXTHDR_UDP || protocol == NEXTHDR_TCP)
+	if (protocol == IPPROTO_UDP || protocol == IPPROTO_TCP)
 		loop_cont = false;
 
 #pragma clang loop unroll(full)
 	for (i = 0; loop_cont && i < MAX_EXT_HEADERS; i++) {
-		if (protocol == NEXTHDR_ROUTING || protocol == NEXTHDR_HOP
-				|| protocol == NEXTHDR_DEST) {
+		if (protocol == IPPROTO_ROUTING || protocol == IPPROTO_HOPOPTS
+				|| protocol == IPPROTO_DSTOPTS) {
 			protocol = next_hdr[0];
 			hdr_len = ((unsigned int)next_hdr[1] + 1U) << 3;
 			next_hdr += hdr_len;
@@ -566,8 +493,8 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 
 	h_proto = eth->h_proto;
 
-	if (h_proto == htons(ETHERTYPE_VLAN) ||
-			h_proto == htons(ETHERTYPE_VLAN_STAG)) {
+	if (h_proto == htons(ETH_P_8021Q) ||
+			h_proto == htons(ETH_P_8021AD)) {
 		nh_off += sizeof(struct vlan_hdr);
 		if (data + nh_off > data_end) {
 			bpf_debug("%s/VLAN: Invalid data(%p) + nh_off > data_end(%p) => XDP_PASS\n",
@@ -589,6 +516,14 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 		bpf_debug("IPV4: Invalid IP header (%u %u %u) => XDP_PASS\n",
 				(unsigned int)(iph->ihl), (unsigned int)(iph->version), (unsigned int)(iph->ttl));
 		goto pass;
+	}
+
+	/*TODO put NAT64 code in a compilation flag */
+	__be32 ipv4_dst = iph->dest_addr;
+	struct ip6_route_info *ip6_info = bpf_map_lookup_elem(&nat64_ip4_ip6_src_route_map, &ipv4_dst);
+	if (ip6_info) {
+		bpf_tail_call(ctx, &fp_modules, XDP_NAT46_SIIT);
+		return XDP_PASS; // fallback
 	}
 
 	switch (iph->protocol) {
@@ -878,8 +813,8 @@ int xdp_fp_prog(struct xdp_md *ctx)
 
 	h_proto = eth->h_proto;
 
-	if (h_proto == htons(ETHERTYPE_VLAN) ||
-			h_proto == htons(ETHERTYPE_VLAN_STAG)) {
+	if (h_proto == htons(ETH_P_8021Q) ||
+			h_proto == htons(ETH_P_8021AD)) {
 		struct vlan_ethhdr *vhdr = data;
 
 		if ((void *)(vhdr + 1) > data_end) {
@@ -894,11 +829,11 @@ int xdp_fp_prog(struct xdp_md *ctx)
 		h_proto = vhdr->h_vlan_encapsulated_proto;
 	}
 
-	if (h_proto == htons(ETHERTYPE_IPV4)) {
+	if (h_proto == htons(ETH_P_IP)) {
 		/* bpf_debug("Calling IPV4 module\n"); */
 		return parse_ipv4(ctx);
 	}
-	else if (h_proto == htons(ETHERTYPE_IPV6)) {
+	else if (h_proto == htons(ETH_P_IPV6)) {
 		/* bpf_debug("Calling IPV6 module\n"); */
 		return parse_ipv6(ctx);
 //		bpf_tail_call(ctx, &fp_modules, IPV6_ENTRY);
