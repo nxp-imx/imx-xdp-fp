@@ -12,59 +12,17 @@
  * General Public License for more details.
  */
 
-#include <linux/bpf.h>
 #include <linux/if_link.h>
 #include <linux/limits.h>
-#include <net/if.h>
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <libgen.h>
-#include <arpa/inet.h>
 
-#include <bpf/libbpf.h>
-#include <bpf/bpf.h>
-
-#include "xdp_fp_common.h"
-
-#define PINNED_STATS   "/sys/fs/bpf/fp_stats"
-#define PINNED_GLOBALS "/sys/fs/bpf/fp_globals"
-
-#define MAX_IF_NAME_LEN 10
-
-#define PINNED_MAPS "/sys/fs/bpf"
-#define PINNED_IPV4 "/sys/fs/bpf/fp_ipv4"
-#define PINNED_IPV6 "/sys/fs/bpf/fp_ipv6"
-#define PINNED_ROUTE "/sys/fs/bpf/fp_route"
-#define PINNED_MAC_PORT "/sys/fs/bpf/fp_mac_to_port"
-#define PINNED_PORT "/sys/fs/bpf/fp_tx_ports"
-#define PINNED_NAT64_IP6_IP4 "/sys/fs/bpf/nat64_ip6_ip4_src_map"
-#define PINNED_NAT64_IP4_IP6 "/sys/fs/bpf/nat64_ip4_ip6_src_route_map"
-#define PINNED_NAT64_DST_ROUTE "/sys/fs/bpf/nat64_dst_ip_route_map"
-
-#define ETH_ALEN    6
-#define PROTO_VLAN 0x8100
-#define PROTO_IPV4 0x0800
-#define PROTO_IPV6 0x86DD
-
-#define IPV4_INPUT_FILE "input.txt"
-#define LINE_LEN 128
-#define VLAN_ID 42
+#include "xdp_fp_user.h"
 
 /* Default MAC addresses */
-static unsigned char if1_mac_addr[ETH_ALEN] =
-                { 0x00, 0x04, 0x9F, 0x05, 0xC8, 0x39 };
-static unsigned char dst_mac_addr1[ETH_ALEN] =
-                { 0x02, 0xFF, 0xFF, 0xFF, 0x01, 0x02 };
-
-struct vlan_info {
-        u16 vlan_id;
-        int if_index;
-};
+unsigned char if1_mac_addr[ETH_ALEN] =
+		{ 0x00, 0x04, 0x9F, 0x05, 0xC8, 0x39 };
+unsigned char dst_mac_addr1[ETH_ALEN] =
+		{ 0x02, 0xFF, 0xFF, 0xFF, 0x01, 0x02 };
 
 static __u32 xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST;
 
@@ -87,53 +45,6 @@ static void print_usage(const char *prg)
 	fprintf(stderr, " -l    set rate limit of a flow \n");
 	fprintf(stderr, " -u    load user given rules from input.txt, Applicable with -a option only. \n");
 	fprintf(stderr, "\n");
-}
-
-static void print_stats(struct stats_entry *stats_value, unsigned int nr_cpus)
-{
-	unsigned int i, mode;
-	u64 all_bytes_fp[GLOB_FP_MAX] = {0}, all_packets_fp[GLOB_FP_MAX] = {0};
-	u64 all_bytes_sp[GLOB_FP_MAX] = {0}, all_packets_sp[GLOB_FP_MAX] = {0};
-
-	for (mode = 0u; mode < GLOB_FP_MAX; mode++) {
-		printf("--------------------------------------------------------------\n");
-		printf("-----------------%s-------------------------\n",
-			(mode == GLOB_IP_MODE) ? " IP Forwarding Mode " : "--- Bridge Mode ----");
-		printf("--------------------------------------------------------------\n");
-		for (i = 0u; i < nr_cpus; i++) {
-			all_bytes_fp[mode]   += stats_value[i].bytes_fp[mode];
-			all_packets_fp[mode] += stats_value[i].packets_fp[mode];
-			if (stats_value[i].bytes_fp[mode]) {
-				printf("CPU%u   FP Bytes:%16lu   FP Packets:%16lu\n", i,
-					stats_value[i].bytes_fp[mode],
-					stats_value[i].packets_fp[mode]);
-			}
-			all_bytes_sp[mode]   += stats_value[i].bytes_sp[mode];
-			all_packets_sp[mode] += stats_value[i].packets_sp[mode];
-			if (stats_value[i].bytes_sp[mode]) {
-				printf("CPU%u   SP Bytes:%16lu   SP Packets:%16lu\n", i,
-					stats_value[i].bytes_sp[mode],
-					stats_value[i].packets_sp[mode]);
-			}
-			if (mode == GLOB_BRIDGE_MODE) {
-				if (stats_value[i].m_pkts_fp[mode]) {
-					printf("CPU%u   FP Matched Packets:%35lu\n", i,
-						stats_value[i].m_pkts_fp[mode]);
-				}
-				if (stats_value[i].nm_pkts_fp[mode]) {
-					printf("CPU%u   FP Unmatched Packets:%34lu\n", i,
-						stats_value[i].nm_pkts_fp[mode]);
-				}
-			}
-
-		}
-		printf("**************************************************************\n");
-		printf("Total: FP Bytes:%16lu   FP Packets:%16lu\n",
-			all_bytes_fp[mode], all_packets_fp[mode]);
-		printf("Total: SP Bytes:%16lu   SP Packets:%16lu\n",
-			all_bytes_sp[mode], all_packets_sp[mode]);
-		printf("--------------------------------------------------------------\n");
-	}
 }
 
 static int do_attach(int idx, int prog_fd, const char *name)
@@ -204,722 +115,21 @@ close_out:
 	return err;
 }
 
-static int route_add(int route_fd, int if_index, unsigned char *smac,
-		unsigned char *dmac, struct vlan_info *vinfo)
-{
-	struct route route = {};
-	int key = if_index;
-
-	route.flags = 0;
-	route.mtu = 1500;
-
-	route.l2_hdr_size = 2*ETH_ALEN;
-	memcpy(route.l2_hdr, dmac, ETH_ALEN);
-	memcpy(route.l2_hdr + ETH_ALEN, smac, ETH_ALEN);
-
-	if (vinfo) {
-		route.redir_ifindex = vinfo->if_index;
-		u16 *vlan_tpid = (u16 *)&route.l2_hdr[2*ETH_ALEN];
-		u16 *vlan_tci = vlan_tpid + 1;
-		*vlan_tpid = htons(PROTO_VLAN);
-		*vlan_tci = htons(vinfo->vlan_id);
-		route.l2_hdr_size += 2*sizeof(u16);
-	} else
-		route.redir_ifindex = if_index;
-	 route.redir_if_type = ARPHRD_ETHER;
-
-	return bpf_map_update_elem(route_fd, &key, &route, BPF_ANY);
-}
-
-static void set_ipv4_checksum_correction(struct ipv4_flow *ipv4f,
-		struct ipv4_info *ipv4i)
-{
-	unsigned int saddr_corr = 0;
-	unsigned int daddr_corr = 0;
-	unsigned int sport_corr = 0;
-	unsigned int dport_corr = 0;
-	unsigned int corr;
-
-	if (ipv4f->saddr != ipv4i->nat_saddr
-			|| ipv4f->daddr != ipv4i->nat_daddr
-			|| ipv4f->sport != ipv4i->nat_sport
-			|| ipv4f->dport != ipv4i->nat_dport)
-		ipv4i->flags |= FP_INFO_FLAG_NAT;
-
-	ipv4i->ip_csum_corr = 0x0001;
-
-	/* Calculate checksum correction */
-	saddr_corr = (ipv4f->saddr & 0xffff) + (ipv4f->saddr >> 16)
-		+ ((ipv4i->nat_saddr & 0xffff) ^ 0xffff)
-		+ ((ipv4i->nat_saddr >> 16) ^ 0xffff);
-	daddr_corr = (ipv4f->daddr & 0xffff) + (ipv4f->daddr >> 16)
-		+ ((ipv4i->nat_daddr & 0xffff) ^ 0xffff)
-		+ ((ipv4i->nat_daddr >> 16) ^ 0xffff);
-	sport_corr = ipv4f->sport + (ipv4i->nat_sport ^ 0xffff);
-	dport_corr = ipv4f->dport + (ipv4i->nat_dport ^ 0xffff);
-
-	/* IP checksum */
-	/* NAT correction */
-	corr = saddr_corr + daddr_corr;
-	while (corr >> 16)
-		corr = (corr & 0xffff) + (corr >> 16);
-
-	if (corr == 0xffff)
-		corr = 0;
-
-	/* TTL correction */
-	corr += 0x0001;
-	if (corr + 1 >= 0x10000)
-		corr++;
-
-	ipv4i->ip_csum_corr = corr;
-
-	/* UDP/TCP checksum */
-	corr = saddr_corr + daddr_corr + dport_corr + sport_corr;
-
-	while (corr >> 16)
-		corr = (corr & 0xffff) + (corr >> 16);
-
-	if (corr == 0xffff)
-		corr = 0;
-
-	ipv4i->trans_csum_corr = corr;
-}
-
-static int update_ipv4_entries(int map_fd)
-{
-	struct ipv4_flow ipv4_key = {};
-	struct ipv4_info ipv4_value = {};
-
-	FILE *file = fopen(IPV4_INPUT_FILE, "r");
-	if (!file) {
-		perror("fopen");
-		return -1;
-	}
-	char interface_name[64] = {};
-	bool entry_started = false;
-	char line[256];
-	int entry_count =0;
-	int ret = 0;
-	while (fgets(line, sizeof(line), file)) {
-		// Trim leading whitespace
-		char *trimmed = line;
-		while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\r')
-			trimmed++;
-		// Entry boundary
-		if (*trimmed == '\n' || *trimmed == '\0') {
-			if (!entry_started)
-				continue;
-			// Process complete entry
-			if (interface_name[0] != '\0') {
-				ipv4_value.route_ifindex = if_nametoindex(interface_name);
-				if (ipv4_value.route_ifindex == 0) {
-					printf("Invalid interface name: %s\n", interface_name);
-				}
-			}
-			ipv4_value.flags = FP_INFO_FLAG_FAST_PATH;
-			set_ipv4_checksum_correction(&ipv4_key, &ipv4_value);
-			ret = bpf_map_update_elem(map_fd, &ipv4_key, &ipv4_value, BPF_ANY);
-			if (ret) {
-				perror("bpf_map_update_elem");
-				break;
-			}
-		}
-		// Parse key-value pair
-		char key[64], val[64];
-		if (sscanf(trimmed, "%[^=]=%s", key, val) != 2)
-			continue;
-		entry_started = true;
-		if (strcmp(key, "saddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_key.saddr);
-		else if (strcmp(key, "daddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_key.daddr);
-		else if (strcmp(key, "sport") == 0)
-			ipv4_key.sport = htons(atoi(val));
-		else if (strcmp(key, "dport") == 0)
-			ipv4_key.dport = htons(atoi(val));
-		else if (strcmp(key, "protocol") == 0)
-			ipv4_key.protocol = atoi(val);
-		else if (strcmp(key, "nat_saddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_value.nat_saddr);
-		else if (strcmp(key, "nat_daddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_value.nat_daddr);
-		else if (strcmp(key, "nat_sport") == 0)
-			ipv4_value.nat_sport = htons(atoi(val));
-		else if (strcmp(key, "nat_dport") == 0)
-			ipv4_value.nat_dport = htons(atoi(val));
-		else if (strcmp(key, "mtu") == 0)
-			ipv4_value.mtu = atoi(val);
-		else if (strcmp(key, "rate_limit") == 0)
-			ipv4_value.rate_limit = atoi(val);
-		else if (strcmp(key, "interface") == 0)
-			strncpy(interface_name, val, sizeof(interface_name));
-	}
-	// Handle last entry if file end with a newline
-	if (entry_started) {
-		if (interface_name[0] != '\0') {
-			ipv4_value.route_ifindex = if_nametoindex(interface_name);
-			if (ipv4_value.route_ifindex == 0) {
-				fprintf(stderr, "Invalid interface name: %s\n", interface_name);
-			}
-		}
-		ipv4_value.flags = FP_INFO_FLAG_FAST_PATH;
-		set_ipv4_checksum_correction(&ipv4_key, &ipv4_value);
-		++entry_count;
-		ret = bpf_map_update_elem(map_fd, &ipv4_key, &ipv4_value, BPF_ANY);
-		if (ret){
-			printf("bpf_map_update_elem (last entry)");
-		}
-	}
-	fclose(file);
-	return ret;
-}
-
-static void convert_mac_address(const char *addr_str, unsigned char *mac_addr)
-{
-	unsigned int input[ETH_ALEN];
-
-	sscanf(addr_str, "%x:%x:%x:%x:%x:%x", &input[0], &input[1], &input[2],
-			&input[3], &input[4], &input[5]);
-
-
-	mac_addr[0] = input[0];
-	mac_addr[1] = input[1];
-	mac_addr[2] = input[2];
-	mac_addr[3] = input[3];
-	mac_addr[4] = input[4];
-	mac_addr[5] = input[5];
-}
-
-static int get_device_info(char *device, unsigned char *dev_addr, int *if_index)
-{
-	char device_info_path[256];
-	FILE *fp;
-	char mac_addr_str[3*ETH_ALEN];
-
-	/* MAC address */
-	if (dev_addr) {
-		sprintf(device_info_path, "/sys/class/net/%s/address", device);
-		fp = fopen(device_info_path, "r");
-		if (!fp)
-			return -1;
-		if (fgets(mac_addr_str, 3*ETH_ALEN, fp) == NULL) {
-			fprintf(stderr, "Mac address get fails for device %s\n", device);
-			return -1;
-		}
-
-		convert_mac_address(mac_addr_str, dev_addr);
-		fclose(fp);
-	}
-
-	/* Interface index */
-	if (if_index) {
-		sprintf(device_info_path, "/sys/class/net/%s/ifindex", device);
-		fp = fopen(device_info_path, "r");
-		if (!fp)
-			return -1;
-		*if_index = atoi(fgets((char *)if_index, 4, fp));
-		fclose(fp);
-	}
-
-	return 0;
-}
-
-void print_ip(__u32 ip)
-{
-	struct in_addr addr = { .s_addr = ip };
-
-	printf("%s", inet_ntoa(addr));
-}
-
-void dump_ipv4_flows(int ipv4_fd)
-{
-	struct ipv4_flow key = {}, next_key;
-	struct ipv4_info value;
-
-	FILE *f = fopen("ipv4_flows.txt", "w");
-	if (!f) {
-		perror("Failed to open output file");
-		return;
-	}
-
-	fprintf(f, "IPv4 Flow Table:\n");
-	fprintf(f, "------------------------------------------------------------------------------------------------------------------------------------------------------\n");
-	fprintf(f, "%-15s %-10s %-15s %-10s %-7s %-15s %-15s %-13s %-13s %-7s %-12s %-10s\n",
-		"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
-		"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit", "Route Key");
-
-	while (bpf_map_get_next_key(ipv4_fd, &key, &next_key) == 0) {
-		if (bpf_map_lookup_elem(ipv4_fd, &next_key, &value) == 0) {
-			char saddr[INET_ADDRSTRLEN], daddr[INET_ADDRSTRLEN];
-			char nsaddr[INET_ADDRSTRLEN], ndaddr[INET_ADDRSTRLEN];
-
-			inet_ntop(AF_INET, &next_key.saddr, saddr, sizeof(saddr));
-			inet_ntop(AF_INET, &next_key.daddr, daddr, sizeof(daddr));
-			inet_ntop(AF_INET, &value.nat_saddr, nsaddr, sizeof(nsaddr));
-			inet_ntop(AF_INET, &value.nat_daddr, ndaddr, sizeof(ndaddr));
-
-		fprintf(f, "%-15s %-10u %-15s %-10u %-7u %-15s %-15s %-13u %-13u %-7u %-12lu %-10d\n",
-				saddr, ntohs(next_key.sport),
-				daddr, ntohs(next_key.dport),
-				next_key.protocol,
-				nsaddr, ndaddr,
-				ntohs(value.nat_sport), ntohs(value.nat_dport),
-				value.active, value.rate_limit,
-				value.route_ifindex);
-		}
-		key = next_key;
-	}
-
-	printf("Run Command to see IPv4 Flows: cat ./ipv4_flows.txt\n");
-	fclose(f);
-}
-
-void dump_ipv6_flows(int ipv6_fd)
-{
-	struct ipv6_flow key = {}, next_key;
-	struct ipv6_info value;
-
-	FILE *f = fopen("ipv6_flows.txt", "w");
-	if (!f) {
-		perror("Failed to open output file");
-		return;
-	}
-
-	fprintf(f, "IPv6 Flow Table:\n");
-	fprintf(f, "-------------------------------------------------------------------------------------------------------------------------------------------");
-	fprintf(f, "----------------------------------------------------------------------------------------------------\n");
-	fprintf(f, "%-40s %-10s %-40s %-10s %-7s %-40s %-40s %-13s %-13s %-7s %-12s %-10s\n",
-			"Src IP", "Src Port", "Dst IP", "Dst Port", "Proto",
-			"Out Src IP", "Out Dst IP", "Out Src Port", "Out Dst Port", "Active", "Rate Limit", "Route Key");
-
-	while (bpf_map_get_next_key(ipv6_fd, &key, &next_key) == 0) {
-		if (bpf_map_lookup_elem(ipv6_fd, &next_key, &value) == 0) {
-			char saddr[INET6_ADDRSTRLEN], daddr[INET6_ADDRSTRLEN];
-			char nsaddr[INET6_ADDRSTRLEN], ndaddr[INET6_ADDRSTRLEN];
-
-			inet_ntop(AF_INET6, next_key.saddr, saddr, sizeof(saddr));
-			inet_ntop(AF_INET6, next_key.daddr, daddr, sizeof(daddr));
-			inet_ntop(AF_INET6, value.nat_saddr, nsaddr, sizeof(nsaddr));
-			inet_ntop(AF_INET6, value.nat_daddr, ndaddr, sizeof(ndaddr));
-
-			fprintf(f, "%-40s %-10u %-40s %-10u %-7u %-40s %-40s %-13u %-13u %-7u %-12lu %-10d\n",
-				saddr, ntohs(next_key.sport),
-				daddr, ntohs(next_key.dport),
-				next_key.protocol,
-				nsaddr, ndaddr,
-				ntohs(value.nat_sport), ntohs(value.nat_dport),
-				value.active, value.rate_limit,
-				value.route_ifindex);
-		}
-		key = next_key;
-	}
-
-	fclose(f);
-	printf("Run command to see IPv6 Flows: cat ./ipv6_flows.txt\n");
-}
-
-void dump_fp_routes(int fp_route_fd)
-{
-    int key = 0;
-    struct route value;
-
-    FILE *f = fopen("fp_routes.txt", "w");
-    if (!f) {
-        perror("Failed to open output file");
-        return;
-    }
-
-    fprintf(f, "Fast Path Route Table:\n");
-    fprintf(f, "-------------------------------------------------------------------------------------------------------------\n");
-    fprintf(f, "%-10s %-15s %-10s %-6s %-6s %-20s\n",
-            "Key", "Flags", "IfIndex", "MTU", "Type", "L2 Header (DEST_MAC SRC_MAC)");
-
-    for (key = 0; key < MAX_FP_ROUTES; key++) {
-        if (bpf_map_lookup_elem(fp_route_fd, &key, &value) == 0) {
-            if (value.redir_ifindex == 0 && value.l2_hdr_size == 0)
-                continue;
-
-            fprintf(f, "%-10d 0x%-13x %-10d %-6u %-6u ",
-                    key, value.flags, value.redir_ifindex,
-                    value.mtu, value.redir_if_type);
-
-            for (int i = 0; i < 6 && i < MAX_L2_HEADER_SIZE; i++) {
-                fprintf(f, "%02x", value.l2_hdr[i]);
-                if (i < 5 && i < value.l2_hdr_size - 1)
-                    fprintf(f, ":");
-            }
-            fprintf(f, " ");
-            for (int i = 6; i < 12 && i < MAX_L2_HEADER_SIZE; i++) {
-                fprintf(f, "%02x", value.l2_hdr[i]);
-                if (i < 11 && i < value.l2_hdr_size - 1)
-                    fprintf(f, ":");
-            }
-            fprintf(f, "\n");
-        }
-    }
-
-    fclose(f);
-    printf("Run Command to see Fast Path Routes: cat ./fp_routes.txt\n");
-}
-
-
-void dump_nat64_ip6_ip4_src_map() {
-    int map_fd = bpf_obj_get(PINNED_NAT64_IP6_IP4);
-    if (map_fd < 0) {
-        perror("Failed to open nat64_ip6_ip4_src_map");
-        return;
-    }
-
-    FILE *f = fopen("nat64_ip6_ip4_src_map.txt", "w");
-    if (!f) {
-        perror("Failed to open output file");
-        return;
-    }
-
-    struct in6_addr key = {}, next_key;
-    __be32 value;
-    char ip6_str[INET6_ADDRSTRLEN], ip4_str[INET_ADDRSTRLEN];
-
-    fprintf(f, "NAT64 IPv6 to IPv4 Source Map:\n");
-    fprintf(f, "-------------------------------------------------------------\n");
-    fprintf(f, "%-40s %-15s\n", "IPv6 Address", "IPv4 Address");
-
-    while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
-        if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
-            inet_ntop(AF_INET6, &next_key, ip6_str, sizeof(ip6_str));
-            inet_ntop(AF_INET, &value, ip4_str, sizeof(ip4_str));
-            fprintf(f, "%-40s %-15s\n", ip6_str, ip4_str);
-        }
-        key = next_key;
-    }
-
-    fclose(f);
-    printf("Run to view: cat nat64_ip6_ip4_src_map.txt\n");
-}
-
-void dump_nat64_ip4_ip6_src_route_map() {
-    int map_fd = bpf_obj_get(PINNED_NAT64_IP4_IP6);
-    if (map_fd < 0) {
-        perror("Failed to open nat64_ip4_ip6_src_route_map");
-        return;
-    }
-
-    FILE *f = fopen("nat64_ip4_ip6_src_route_map.txt", "w");
-    if (!f) {
-        perror("Failed to open output file");
-        return;
-    }
-
-    __be32 key = 0, next_key;
-    struct {
-        struct in6_addr ip6;
-        __u32 route_id;
-    } value;
-    char ip4_str[INET_ADDRSTRLEN], ip6_str[INET6_ADDRSTRLEN];
-
-    fprintf(f, "NAT64 IPv4 to IPv6 + Route Map:\n");
-    fprintf(f, "----------------------------------------------------------------------------------\n");
-    fprintf(f, "%-15s %-40s %-10s\n", "IPv4 Address", "IPv6 Address", "Route ID");
-
-    while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
-        if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
-            inet_ntop(AF_INET, &next_key, ip4_str, sizeof(ip4_str));
-            inet_ntop(AF_INET6, &value.ip6, ip6_str, sizeof(ip6_str));
-            fprintf(f, "%-15s %-40s %-10u\n", ip4_str, ip6_str, value.route_id);
-        }
-        key = next_key;
-    }
-
-    fclose(f);
-    printf("Run to view: cat nat64_ip4_ip6_src_route_map.txt\n");
-}
-
-void dump_nat64_dst_ip_route_map() {
-    int map_fd = bpf_obj_get(PINNED_NAT64_DST_ROUTE);
-    if (map_fd < 0) {
-        perror("Failed to open nat64_dst_ip_route_map");
-        return;
-    }
-
-    FILE *f = fopen("nat64_dst_ip_route_map.txt", "w");
-    if (!f) {
-        perror("Failed to open output file");
-        return;
-    }
-
-    __be32 key = 0, next_key;
-    __u32 value;
-    char ip4_str[INET_ADDRSTRLEN];
-
-    fprintf(f, "NAT64 Destination IP to Route Map:\n");
-    fprintf(f, "---------------------------------------------\n");
-    fprintf(f, "%-15s %-10s\n", "IPv4 Address", "Route ID");
-
-    while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
-        if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
-            inet_ntop(AF_INET, &next_key, ip4_str, sizeof(ip4_str));
-            fprintf(f, "%-15s %-10u\n", ip4_str, value);
-        }
-        key = next_key;
-    }
-
-    fclose(f);
-    printf("Run to view: cat nat64_dst_ip_route_map.txt\n");
-}
-
-void set_flow_rate_limit(void)
-{
-	int version;
-	char saddr_str[INET6_ADDRSTRLEN], daddr_str[INET6_ADDRSTRLEN];
-	int sport, dport, proto;
-	__u64 rate_limit;
-	int map_fd;
-
-	printf("Select IP version (4 or 6): ");
-	if (scanf("%d", &version) != 1 || (version != 4 && version != 6)) {
-		fprintf(stderr, "Invalid IP version selected.\n");
-		return;
-	}
-
-
-	printf("Enter source IP: ");
-	if (scanf("%45s", saddr_str) != 1) {
-		fprintf(stderr, "Invalid input for source IP\n");
-		return;
-	}
-
-	printf("Enter destination IP: ");
-	if (scanf("%45s", daddr_str) != 1) {
-		fprintf(stderr, "Invalid input for destination IP\n");
-		return;
-	}
-
-	printf("Enter source port: ");
-	if (scanf("%d", &sport) != 1) {
-		fprintf(stderr, "Invalid input for source port\n");
-		return;
-	}
-
-	printf("Enter destination port: ");
-	if (scanf("%d", &dport) != 1) {
-		fprintf(stderr, "Invalid input for destination port\n");
-		return;
-	}
-
-	printf("Enter protocol (e.g., 6 for TCP, 17 for UDP): ");
-	if (scanf("%d", &proto) != 1) {
-		fprintf(stderr, "Invalid input for protocol\n");
-		return;
-	}
-
-	printf("Enter rate limit (bytes/sec): ");
-	if (scanf("%llu", &rate_limit) != 1) {
-		fprintf(stderr, "Invalid input for rate limit\n");
-		return;
-	}
-
-	if (version == 4) {
-		struct ipv4_flow flow = {};
-		struct ipv4_info info = {};
-
-		map_fd = bpf_obj_get(PINNED_IPV4);
-		if (map_fd < 0) {
-			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n", PINNED_IPV4, strerror(errno), errno);
-			return;
-		}
-
-		inet_pton(AF_INET, saddr_str, &flow.saddr);
-		inet_pton(AF_INET, daddr_str, &flow.daddr);
-		flow.sport = htons(sport);
-		flow.dport = htons(dport);
-		flow.protocol = proto;
-
-		if (bpf_map_lookup_elem(map_fd, &flow, &info) != 0) {
-			fprintf(stderr, "Flow not found, dumping all IPv4 flows:\n");
-			dump_ipv4_flows(map_fd);
-			close(map_fd);
-			return;
-		}
-
-		info.rate_limit = rate_limit;
-		info.bytes_count = 0;
-		info.last_time_ns = 0;
-
-		if (bpf_map_update_elem(map_fd, &flow, &info, BPF_ANY) != 0) {
-			perror("Failed to update IPv4 flow info");
-		} else {
-			printf("Rate limit set to %llu bytes/sec for IPv4 flow\n", rate_limit);
-		}
-	} else {
-		struct ipv6_flow flow = {};
-		struct ipv6_info info = {};
-
-		map_fd = bpf_obj_get(PINNED_IPV6);
-		if (map_fd < 0) {
-			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n", PINNED_IPV6, strerror(errno), errno);
-			return;
-		}
-
-		inet_pton(AF_INET6, saddr_str, flow.saddr);
-		inet_pton(AF_INET6, daddr_str, flow.daddr);
-		flow.sport = htons(sport);
-		flow.dport = htons(dport);
-		flow.protocol = proto;
-
-		if (bpf_map_lookup_elem(map_fd, &flow, &info) != 0) {
-			fprintf(stderr, "Flow not found, dumping all IPv6 flows:\n");
-			dump_ipv6_flows(map_fd);
-			close(map_fd);
-			return;
-		}
-
-		info.rate_limit = rate_limit;
-		info.bytes_count = 0;
-		info.last_time_ns = 0;
-
-		if (bpf_map_update_elem(map_fd, &flow, &info, BPF_ANY) != 0) {
-			perror("Failed to update IPv6 flow info");
-		} else {
-			printf("Rate limit set to %llu bytes/sec for IPv6 flow\n", rate_limit);
-		}
-    }
-
-    close(map_fd);
-}
-
-#define MAX_ENTRIES 1000
-struct ip6_route_info {
-	struct in6_addr ip6;
-	__u32 route_id;
-};
-
-struct ip6_ip4_pair {
-	struct in6_addr ip6;
-	__be32 ip4;
-};
-
-struct ip4_route {
-	__be32 ip4;
-	__u32 route_id;
-};
-
-static int
-load_config_and_populate_maps(int map_fd_ip6_ip4, int map_fd_ip4_ip6_route, int map_fd_dst_ip_route, int map_fd_route_map, const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror("Failed to open config file");
-        return 1;
-    }
-
-    char line[256], section[32] = "";
-    struct ip6_ip4_pair ip6_ip4_list[MAX_ENTRIES];
-    struct ip4_route ip4_route_list[MAX_ENTRIES];
-    int ip6_ip4_count = 0, ip4_route_count = 0;
-
-    while (fgets(line, sizeof(line), file)) {
-        if (line[0] == '#') continue;
-        if (strstr(line, "SRC_IP6-IP4:")) { strcpy(section, "SRC_IP6-IP4"); continue; }
-        if (strstr(line, "SRC_IP_ROUTE:")) { strcpy(section, "SRC_IP_ROUTE"); continue; }
-        if (strstr(line, "DST_IP_ROUTE:")) { strcpy(section, "DST_IP_ROUTE"); continue; }
-	if (strstr(line, "ROUTE_MAP:")) { strcpy(section, "ROUTE_MAP"); continue; }
-
-        if (strlen(line) < 3) continue;
-
-        if (strcmp(section, "SRC_IP6-IP4") == 0) {
-            char ip6_str[64], ip4_str[32];
-            sscanf(line, "%s %s", ip6_str, ip4_str);
-            inet_pton(AF_INET6, ip6_str, &ip6_ip4_list[ip6_ip4_count].ip6);
-            inet_pton(AF_INET, ip4_str, &ip6_ip4_list[ip6_ip4_count].ip4);
-            bpf_map_update_elem(map_fd_ip6_ip4, &ip6_ip4_list[ip6_ip4_count].ip6, &ip6_ip4_list[ip6_ip4_count].ip4, BPF_ANY);
-            ip6_ip4_count++;
-        } else if (strcmp(section, "SRC_IP_ROUTE") == 0) {
-            char ip4_str[32];
-            __u32 route_id;
-            sscanf(line, "%s %u", ip4_str, &route_id);
-            inet_pton(AF_INET, ip4_str, &ip4_route_list[ip4_route_count].ip4);
-            ip4_route_list[ip4_route_count].route_id = route_id;
-            ip4_route_count++;
-        } else if (strcmp(section, "DST_IP_ROUTE") == 0) {
-            char ip4_str[32];
-            __u32 route_id;
-            __be32 ip4;
-            sscanf(line, "%s %u", ip4_str, &route_id);
-            inet_pton(AF_INET, ip4_str, &ip4);
-            bpf_map_update_elem(map_fd_dst_ip_route, &ip4, &route_id, BPF_ANY);
-        } else if (strcmp(section, "ROUTE_MAP") == 0) {
-		__u32 route_id;
-		char ifname[IF_NAMESIZE];
-		__u16 mtu;
-		struct route route_entry;
-		int ifindex, ret;
-		char dst_mac_str[18]; // "00:10:94:00:00:02"
-		unsigned char src_mac_str[18]; // "00:10:94:00:00:02"
-
-	    sscanf(line, "%u %s %hu %17s", &route_id, ifname, &mtu, dst_mac_str);
-	    ret = get_device_info(ifname, src_mac_str, &ifindex);
-	    if (ret) {
-	    	perror("Failed to get device info\n");
-		return ret;
-	    }
-
-	    route_entry.l2_hdr_size = 2*ETH_ALEN;
-	    unsigned int mac[6];
-	if (sscanf(dst_mac_str, "%x:%x:%x:%x:%x:%x",
-        	   &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
-	    fprintf(stderr, "Invalid MAC address format: %s\n", dst_mac_str);
-	    continue;
-	}
-
-	for (int i = 0; i < ETH_ALEN; i++) {
-		    route_entry.l2_hdr[i] = (uint8_t)mac[i];
-	}
-
- 	    memcpy(route_entry.l2_hdr + ETH_ALEN, src_mac_str, ETH_ALEN);
-
-            route_entry.flags = 0;
-            route_entry.redir_ifindex = ifindex;
-            route_entry.mtu = mtu;
-            route_entry.redir_if_type = 1;
-
-            bpf_map_update_elem(map_fd_route_map, &route_id, &route_entry, BPF_ANY);
-        }
-    }
-
-    // Populate reverse map
-    for (int i = 0; i < ip6_ip4_count; i++) {
-        for (int j = 0; j < ip4_route_count; j++) {
-            if (ip6_ip4_list[i].ip4 == ip4_route_list[j].ip4) {
-                struct ip6_route_info value = {
-                    .ip6 = ip6_ip4_list[i].ip6,
-                    .route_id = ip4_route_list[j].route_id
-                };
-                bpf_map_update_elem(map_fd_ip4_ip6_route, &ip6_ip4_list[i].ip4, &value, BPF_ANY);
-            }
-        }
-    }
-
-    fclose(file);
-    return 0;
-}
-
 int main(int argc, char **argv)
 {
 	const char *prog_name = "xdp_fp";
-	struct bpf_program *prog = NULL, *nat64_prog = NULL, *nat46_prog = NULL;
-	struct bpf_program *pos;
-	const char *sec_name;
-	int prog_fd = -1, nat64_fd = -1, nat46_fd = -1;
 	char filename[PATH_MAX];
+	const char *sec_name;
+	struct bpf_program *pos;
 	struct bpf_object *obj;
+	int prog_fd = -1, nat64_fd = -1, nat46_fd = -1;
 	int opt, i, idx, err, icount = 0;
-	int attach = 1;
 	int ret = -1;
+	int attach = 1;
 	__u32 port_key = -1, port_value = -1;
+	int modules_key;
 
 	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1, port_fd = -1, modules_fd = -1;
-	int  nat64_ip6_ip4_fd = -1, nat64_ip4_ip6_fd = -1, nat64_dst_fd = -1;
-
 	char fif[MAX_IF_NAME_LEN];
 
 	int reset_stat = 0, print_stat = 0, ff_disabled = 0, ff_status, show_globals = 0,
@@ -978,70 +188,15 @@ int main(int argc, char **argv)
 				print_usage(basename(argv[0]));
 				return 1;
 			case 'D':
-				ipv4_fd = bpf_obj_get(PINNED_IPV4);
-				if (ipv4_fd < 0) {
-					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-						PINNED_IPV4, strerror(errno), errno);
-					return 1;
-				}
-				dump_ipv4_flows(ipv4_fd);
-				close(ipv4_fd);
-				ipv6_fd = bpf_obj_get(PINNED_IPV6);
-				if (ipv6_fd < 0) {
-					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-						PINNED_IPV6, strerror(errno), errno);
-					return 1;
-				}
-				dump_ipv6_flows(ipv6_fd);
-				close(ipv6_fd);
-				route_fd = bpf_obj_get(PINNED_ROUTE);
-				if (route_fd < 0) {
-					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-						PINNED_ROUTE, strerror(errno), errno);
-					return 1;
-				}
-				dump_fp_routes(route_fd);
-				close(route_fd);
+				dump_ipv4_flows();
+				dump_ipv6_flows();
+				dump_fp_routes();
     				dump_nat64_ip6_ip4_src_map();
-				    dump_nat64_ip4_ip6_src_route_map();
-				    dump_nat64_dst_ip_route_map();
+				dump_nat64_ip4_ip6_src_route_map();
+				dump_nat64_dst_ip_route_map();
 				return 1;
 			case 'P':
-				nat64_ip6_ip4_fd = bpf_obj_get(PINNED_NAT64_IP6_IP4);
-				if (nat64_ip6_ip4_fd < 0) {
-					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-						PINNED_NAT64_IP6_IP4, strerror(errno), errno);
-					return 1;
-				}
-				nat64_ip4_ip6_fd = bpf_obj_get(PINNED_NAT64_IP4_IP6);
-				if (nat64_ip4_ip6_fd < 0) {
-					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-						PINNED_NAT64_IP4_IP6, strerror(errno), errno);
-					close(nat64_ip6_ip4_fd);
-					return 1;
-				}
-				nat64_dst_fd = bpf_obj_get(PINNED_NAT64_DST_ROUTE);
-				if (nat64_dst_fd < 0) {
-					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-						PINNED_NAT64_DST_ROUTE, strerror(errno), errno);
-					close(nat64_ip6_ip4_fd);
-					close(nat64_ip4_ip6_fd);
-					return 1;
-				}
-				route_fd = bpf_obj_get(PINNED_ROUTE);
-				if (route_fd < 0) {
-					fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-						PINNED_ROUTE, strerror(errno), errno);
-					close(nat64_ip6_ip4_fd);
-					close(nat64_ip4_ip6_fd);
-					close(nat64_dst_fd);
-					return 1;
-				}
-				load_config_and_populate_maps(nat64_ip6_ip4_fd, nat64_ip4_ip6_fd, nat64_dst_fd, route_fd, "./config.txt");
-				close(nat64_ip6_ip4_fd);
-				close(nat64_ip4_ip6_fd);
-				close(nat64_dst_fd);
-				close(route_fd);
+				load_config_and_populate_maps();
 				return 1;
 			case 'l':
 				set_flow_rate_limit();
@@ -1090,58 +245,49 @@ int main(int argc, char **argv)
 			return 1;
 		}
 
-		bpf_object__for_each_program(pos, obj) {
-			sec_name = bpf_program__section_name(pos);
-			if (!prog && sec_name && !strcmp(sec_name, prog_name)) {
-				prog = pos;
-				//break;
-			}
-			if (!nat64_prog && sec_name && !strcmp(sec_name, "nat64_siit")) {
-				nat64_prog = pos;
-				//break;
-			}
-			if (!nat46_prog && sec_name && !strcmp(sec_name, "nat46_siit")) {
-				nat46_prog = pos;
-				//break;
-			}
-		}
-		prog_fd = bpf_program__fd(prog);
-		if (prog_fd < 0) {
-			printf("program not found: %s\n", strerror(prog_fd));
-			return 1;
-		}
-#if 1
-		nat64_fd = bpf_program__fd(nat64_prog);
-		if (nat64_fd < 0) {
-			printf("program not found: %s\n", strerror(nat64_fd));
-			return 1;
-		}
-		nat46_fd = bpf_program__fd(nat46_prog);
-		if (nat46_fd < 0) {
-			printf("program not found: %s\n", strerror(nat46_fd));
-			return 1;
-		}
-
-		// Get port map FD
 		modules_fd = bpf_object__find_map_fd_by_name(obj, "fp_modules");
 		if (modules_fd < 0) {
 			printf("bpf_object__find_map_fd_by_name failed for fp_modules");
 			goto out;
 		}
+	
+		bpf_object__for_each_program(pos, obj) {
+			sec_name = bpf_program__section_name(pos);
+			if (sec_name && !strcmp(sec_name, prog_name)) {
+				prog_fd = bpf_program__fd(pos);
+				if (prog_fd < 0) {
+					printf("program not found: %s\n", strerror(prog_fd));
+					goto out;
+				}
+			}
+			if (sec_name && !strcmp(sec_name, "nat64_siit")) {
+				nat64_fd = bpf_program__fd(pos);
+				if (nat64_fd < 0) {
+					printf("program not found: %s\n", strerror(nat64_fd));
+					goto out;
+				}
+				modules_key =  XDP_NAT64_SIIT;
+				err = bpf_map_update_elem(modules_fd, &modules_key, &nat64_fd, BPF_ANY);
+				if (err) {
+					fprintf(stderr, "Update modules_fd fails\n");
+					goto out;
+				}
+			}
+			if (sec_name && !strcmp(sec_name, "nat46_siit")) {
+				nat46_fd = bpf_program__fd(pos);
+				if (nat46_fd < 0) {
+					printf("program not found: %s\n", strerror(nat46_fd));
+					goto out;
+				}
+				modules_key =  XDP_NAT46_SIIT;
+				err = bpf_map_update_elem(modules_fd, &modules_key, &nat46_fd, BPF_ANY);
+				if (err) {
+					fprintf(stderr, "Update modules_fd fails\n");
+					goto out;
+				}
+			}
+		}
 
-		int modules_key =  XDP_NAT64_SIIT;
-		err = bpf_map_update_elem(modules_fd, &modules_key, &nat64_fd, BPF_ANY);
-		if (err) {
-			fprintf(stderr, "Update modules_fd fails\n");
-			goto out;
-		}
-		modules_key =  XDP_NAT46_SIIT;
-		err = bpf_map_update_elem(modules_fd, &modules_key, &nat46_fd, BPF_ANY);
-		if (err) {
-			fprintf(stderr, "Update modules_fd fails\n");
-			goto out;
-		}
-#endif
 		port_fd = bpf_object__find_map_fd_by_name(obj, "fp_tx_ports");
 		if (port_fd < 0) {
 			printf("bpf_object__find_map_fd_by_name failed for fp_tx_ports");
@@ -1304,6 +450,12 @@ out:
                 close(ipv4_fd);
         if (ipv6_fd != -1)
                 close(ipv6_fd);
+        if (nat64_fd != -1)
+                close(nat64_fd);
+        if (nat46_fd != -1)
+                close(nat46_fd);
+        if (modules_fd != -1)
+                close(modules_fd);
 
 	if (!attach) {
 		obj = bpf_object__open_file(filename, NULL);

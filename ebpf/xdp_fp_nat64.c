@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Copyright 2025 NXP
+ */
+
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ipv6.h>
