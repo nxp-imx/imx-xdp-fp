@@ -325,6 +325,26 @@ quit
        ```bash
        ./xdp_fp -s
        ```
+ - NAT64 (SIIT). Quick Steps:
+   - ```bash
+     ./network_setup.sh eth0 2001:db8:1::2 eth1 2001:db8:2::2
+     ./xdp_fp -a eth0 eth1
+     ./xdp_fp -P
+     echo 1 > /proc/sys/net/ipv4/conf/eth1/proxy_arp
+     ip neigh add proxy 2.1.1.5 dev eth1
+     ```
+   - Prepare and send traffic
+     - Spirent Port 1: Source IP `2001:DB8:1::1`, GW `2001:DB8:1::2`, Destination IP `64:FF9B::201:101`, Destination MAC of `eth0`, ICMP request packet.
+     - Resolve ARP on Spirent2/Server PC:
+       ```bash
+       arping/ping 2.1.1.5
+       arp -s
+       ```
+     - Send traffic and capture on same Spirent port1 to see icmp reply packets.
+   - Dump Rules:
+     ```bash
+     ./xdp_fp -D
+     ```
 
 ### 3. IP forwarding fastpath mode with static user rules:
 
@@ -418,6 +438,7 @@ You should observe the following traffic pattern in the Wireshark capture:
 - `-g`    show global Fast Forward status
 - `-s`    display statistics counters
 - `-D`    dump XDP flows
+- `-P`    Populate NAT64 configuration
 - `-l`    set rate limit of a flow
 - `-u`    load user given rules from input.txt, Applicable with -a option only.
 

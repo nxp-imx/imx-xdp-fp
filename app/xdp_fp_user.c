@@ -42,6 +42,7 @@ static void print_usage(const char *prg)
 	fprintf(stderr, " -g    show global Fast Forward status \n");
 	fprintf(stderr, " -s    display statistics counters \n");
 	fprintf(stderr, " -D    dump XDP flows \n");
+	fprintf(stderr, " -P    Populate NAT64 configuration \n");
 	fprintf(stderr, " -l    set rate limit of a flow \n");
 	fprintf(stderr, " -u    load user given rules from input.txt, Applicable with -a option only. \n");
 	fprintf(stderr, "\n");

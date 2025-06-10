@@ -136,7 +136,6 @@ int nat64_siit_prog(struct xdp_md *ctx)
 	if ((void *)(icmp6 + 1) > data_end) return XDP_PASS;
 	if ((void *)(icmp4 + 1) > data_end) return XDP_PASS;
 
-	/* Switch case code referred from cilium */
 	switch (icmp6->icmp6_type) {
 		case ICMPV6_ECHO_REQUEST:
 			icmp4->type = ICMP_ECHO;
@@ -368,7 +367,6 @@ int nat46_siit_prog(struct xdp_md *ctx)
 	if ((void *)(icmp4 + 1) > data_end) return XDP_PASS;
 	if ((void *)(icmp6 + 1) > data_end) return XDP_PASS;
 
-	/* Switch case code referred from cilium */
 	switch (icmp4->type) {
 	case ICMP_ECHO:
 		icmp6->icmp6_type = ICMPV6_ECHO_REQUEST;

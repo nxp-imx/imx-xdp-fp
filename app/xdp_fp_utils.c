@@ -9,7 +9,7 @@
 #define PROTO_VLAN 0x8100
 
 #define IPV4_INPUT_FILE "input.txt"
-#define NAT64_INPUT_FILE "config.txt"
+#define NAT64_INPUT_FILE "nat64.txt"
 #define MAX_ENTRIES 1000
 
 struct ip6_route_info {
