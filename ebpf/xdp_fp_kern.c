@@ -31,9 +31,11 @@ struct xdp_fp_ipv6 fp_ipv6 SEC(".maps");
 struct xdp_fp_mac_to_port fp_mac_to_port SEC(".maps");
 struct xdp_fp_tx_ports fp_tx_ports SEC(".maps");
 struct xdp_fp_route fp_route SEC(".maps");
+#ifdef NAT64_SIIT
 struct xdp_nat64_ip6_ip4_src_map nat64_ip6_ip4_src_map SEC(".maps");
 struct xdp_nat64_ip4_ip6_src_route_map nat64_ip4_ip6_src_route_map SEC(".maps");
 struct xdp_nat64_dst_ip_route_map nat64_dst_ip_route_map SEC(".maps");
+#endif
 
 static void __always_inline ipv6_copy(u32 *a, u32 *b)
 {
@@ -237,13 +239,15 @@ static __always_inline int parse_ipv6(struct xdp_md *ctx)
 		goto pass;
 	}
 
-        // Check if destination is NAT64 prefix
+#ifdef NAT64_SIIT
+	// Check if destination is NAT64 prefix
         if ((iph->daddr.s6_addr32[0] == __constant_htonl(NAT64_PREFIX)) &&
             (iph->daddr.s6_addr32[1] == 0) &&
             (iph->daddr.s6_addr32[2] == 0)) {
 		bpf_tail_call(ctx, &fp_modules, XDP_NAT64_SIIT);
 		return XDP_PASS; // fallback
 	}
+#endif
 
 	protocol = iph->nexthdr;
 
@@ -518,13 +522,14 @@ static __always_inline int parse_ipv4(struct xdp_md *ctx)
 		goto pass;
 	}
 
-	/*TODO put NAT64 code in a compilation flag */
+#ifdef NAT64_SIIT
 	__be32 ipv4_dst = iph->dest_addr;
 	struct ip6_route_info *ip6_info = bpf_map_lookup_elem(&nat64_ip4_ip6_src_route_map, &ipv4_dst);
 	if (ip6_info) {
 		bpf_tail_call(ctx, &fp_modules, XDP_NAT46_SIIT);
 		return XDP_PASS; // fallback
 	}
+#endif
 
 	switch (iph->protocol) {
 		case IPPROTOCOL_UDP:

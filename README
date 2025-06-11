@@ -326,6 +326,7 @@ quit
        ./xdp_fp -s
        ```
  - NAT64 (SIIT). Quick Steps:
+   - Compile xdp_fp with "-DNAT64_SIIT". Pass it in both CLANG_FLAGS and CFLAGS.
    - ```bash
      ./network_setup.sh eth0 2001:db8:1::2 eth1 2001:db8:2::2
      ./xdp_fp -a eth0 eth1

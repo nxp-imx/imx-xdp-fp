@@ -192,9 +192,11 @@ int main(int argc, char **argv)
 				dump_ipv4_flows();
 				dump_ipv6_flows();
 				dump_fp_routes();
+#ifdef NAT64_SIIT
     				dump_nat64_ip6_ip4_src_map();
 				dump_nat64_ip4_ip6_src_route_map();
 				dump_nat64_dst_ip_route_map();
+#endif
 				return 1;
 			case 'P':
 				load_config_and_populate_maps();
