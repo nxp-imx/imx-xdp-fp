@@ -730,6 +730,9 @@ int xdp_fp_bridge_prog(struct xdp_md *ctx) {
 	struct ethhdr *eth = data;
 	struct stats_entry *stats = NULL;
 	int *ff_disabled, index_key = GLOB_FF_DISABLE, index_key_stat = GLOB_STAT;
+#ifdef DEBUG
+	const char module[] = "Bridge";
+#endif
 
 	if ((void *)(eth + 1) > data_end)
 		goto pass;

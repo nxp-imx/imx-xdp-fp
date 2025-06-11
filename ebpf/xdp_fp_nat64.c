@@ -201,7 +201,7 @@ int nat64_siit_prog(struct xdp_md *ctx)
 	ridx = *route_id;
 	route = bpf_map_lookup_elem(&fp_route, &ridx);
 	if (!route) {
-		bpf_debug("%s: Non existing route(%d) => XDP_PASS\n", module, index_key);
+		bpf_debug("%s: Non existing route(%d) => XDP_PASS\n", module, ridx);
 		return XDP_PASS;
 	}
 	if (route->redir_if_type == ARPHRD_ETHER) {
@@ -426,7 +426,7 @@ int nat46_siit_prog(struct xdp_md *ctx)
 
 	route = bpf_map_lookup_elem(&fp_route, &ridx);
 	if (!route) {
-		bpf_debug("%s: Non existing route(%d) => XDP_PASS\n", module, index_key);
+		bpf_debug("%s: Non existing route(%d) => XDP_PASS\n", module, ridx);
 		return XDP_PASS;
 	}
 	if (route->redir_if_type == ARPHRD_ETHER) {
