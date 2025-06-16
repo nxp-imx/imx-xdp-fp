@@ -12,63 +12,17 @@
  * General Public License for more details.
  */
 
-#include <linux/bpf.h>
 #include <linux/if_link.h>
 #include <linux/limits.h>
-#include <net/if.h>
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <libgen.h>
-#include <arpa/inet.h>
 
-#include <bpf/libbpf.h>
-#include <bpf/bpf.h>
+#include "xdp_fp_user.h"
 
-#include "xdp_fp_common.h"
-
-#define PINNED_STATS   "/sys/fs/bpf/fp_stats"
-#define PINNED_GLOBALS "/sys/fs/bpf/fp_globals"
-
-#define MAX_IF_NAME_LEN 10
-
-#define PINNED_IPV4 "/sys/fs/bpf/fp_ipv4"
-#define PINNED_IPV6 "/sys/fs/bpf/fp_ipv6"
-#define PINNED_ROUTE "/sys/fs/bpf/fp_route"
-
-#define ETH_ALEN    6
-#define PROTO_VLAN 0x8100
-#define PROTO_IPV4 0x0800
-#define PROTO_IPV6 0x86DD
-//#define IPPROTO_UDP 17
-//#define IPPROTO_TCP 6
-
-#define IPV4_INPUT_FILE "input.txt"
-#define LINE_LEN 128
-
-#define VLAN_ID 42
-
-static unsigned char if1_mac_addr[ETH_ALEN] =
-                { 0x00, 0x04, 0x9F, 0x05, 0xC8, 0x39 };
-static unsigned char if2_mac_addr[ETH_ALEN] =
-                { 0x6C, 0xB3, 0x11, 0x1B, 0x62, 0xB1 };
-static unsigned char dst_mac_addr1[ETH_ALEN] =
-                { 0x02, 0xFF, 0xFF, 0xFF, 0x01, 0x02 };
-static unsigned char dst_mac_addr2[ETH_ALEN] =
-                { 0x02, 0xFF, 0xFF, 0xFF, 0x02, 0x02 };
-
-static int lan_if;
-static int wan_if;
-//static int vlan_if;
-
-struct vlan_info {
-        u16 vlan_id;
-        int if_index;
-};
+/* Default MAC addresses */
+unsigned char if1_mac_addr[ETH_ALEN] =
+		{ 0x00, 0x04, 0x9F, 0x05, 0xC8, 0x39 };
+unsigned char dst_mac_addr1[ETH_ALEN] =
+		{ 0x02, 0xFF, 0xFF, 0xFF, 0x01, 0x02 };
 
 static __u32 xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST;
 
@@ -80,44 +34,18 @@ static void print_usage(const char *prg)
 	fprintf(stderr, " -d    detach program\n");
 	fprintf(stderr, " -S    use skb-mode\n");
 	fprintf(stderr,	" -F    force loading prog\n");
-	fprintf(stderr,	" -D    direct table lookups (skip fib rules)\n");
+	fprintf(stderr,	" -a    attach program (list of ethernet devices)\n");
+	fprintf(stderr,	" -b    run program in bridge mode\n");
+	fprintf(stderr, " -e    enable Fast Forward (enabled by default)\n");
+        fprintf(stderr, " -r    disable Fast Forward \n");
 	fprintf(stderr, " -z    reinitilialize statistics counters \n");
-	fprintf(stderr, " -g    show global map \n");
+	fprintf(stderr, " -g    show global Fast Forward status \n");
 	fprintf(stderr, " -s    display statistics counters \n");
+	fprintf(stderr, " -D    dump XDP flows \n");
+	fprintf(stderr, " -P    Populate NAT64 configuration \n");
+	fprintf(stderr, " -l    set rate limit of a flow \n");
+	fprintf(stderr, " -u    load user given rules from input.txt, Applicable with -a option only. \n");
 	fprintf(stderr, "\n");
-}
-
-static void print_stats(struct stats_entry *stats_value, unsigned int nr_cpus)
-{
-	unsigned int i, iftype;
-	u64 all_bytes_fp[GLOB_IFTYPE_MAX] = {0}, all_packets_fp[GLOB_IFTYPE_MAX] = {0};
-	u64 all_bytes_sp[GLOB_IFTYPE_MAX] = {0}, all_packets_sp[GLOB_IFTYPE_MAX] = {0};
-
-	for (iftype = 0u; iftype < GLOB_IFTYPE_MAX; iftype++) {
-		printf("--------------------------------------------------------------\n");
-		printf("-----------------FROM %s IFACE-----------------------------\n",
-			(iftype == GLOB_ETHERNET_TYPE) ? "ETHER" : "RAWIP");
-		printf("--------------------------------------------------------------\n");
-		for (i = 0u; i < nr_cpus; i++) {
-			all_bytes_fp[iftype]   += stats_value[i].bytes_fp[iftype];
-			all_packets_fp[iftype] += stats_value[i].packets_fp[iftype];
-			printf("CPU%u   FP Bytes:%16lu   FP Packets:%16lu\n", i,
-				stats_value[i].bytes_fp[iftype],
-				stats_value[i].packets_fp[iftype]);
-			all_bytes_sp[iftype]   += stats_value[i].bytes_sp[iftype];
-			all_packets_sp[iftype] += stats_value[i].packets_sp[iftype];
-			printf("CPU%u   SP Bytes:%16lu   SP Packets:%16lu\n", i,
-				stats_value[i].bytes_sp[iftype],
-				stats_value[i].packets_sp[iftype]);
-
-		}
-		printf("--------------------------------------------------------------\n");
-		printf("Total: FP Bytes:%16lu   FP Packets:%16lu\n",
-			all_bytes_fp[iftype], all_packets_fp[iftype]);
-		printf("Total: SP Bytes:%16lu   SP Packets:%16lu\n",
-			all_bytes_sp[iftype], all_packets_sp[iftype]);
-		printf("--------------------------------------------------------------\n");
-	}
 }
 
 static int do_attach(int idx, int prog_fd, const char *name)
@@ -183,246 +111,30 @@ static int do_detach(int ifindex, const char *ifname, const char *app_name)
 	if (err < 0)
 		printf("ERROR: failed to detach program from %s (%s)\n",
 				ifname, strerror(errno));
-	/* TODO: Remember to cleanup map, when adding use of shared map
-	 *  bpf_map_delete_elem((map_fd, &idx);
-	 */
 close_out:
 	close(prog_fd);
 	return err;
 }
 
-static int route_add(int route_fd, int if_index, unsigned char *smac,
-		unsigned char *dmac, struct vlan_info *vinfo)
-{
-	struct route route = {};
-	int key = if_index;
-
-	route.flags = 0;
-	route.mtu = 1500;
-
-	route.l2_hdr_size = 2*ETH_ALEN;
-	memcpy(route.l2_hdr, dmac, ETH_ALEN);
-	memcpy(route.l2_hdr + ETH_ALEN, smac, ETH_ALEN);
-
-	if (vinfo) {
-		route.redir_ifindex = vinfo->if_index;
-		u16 *vlan_tpid = (u16 *)&route.l2_hdr[2*ETH_ALEN];
-		u16 *vlan_tci = vlan_tpid + 1;
-		*vlan_tpid = htons(PROTO_VLAN);
-		*vlan_tci = htons(vinfo->vlan_id);
-		route.l2_hdr_size += 2*sizeof(u16);
-	} else
-		route.redir_ifindex = if_index;
-	 route.redir_if_type = ARPHRD_ETHER;
-
-	return bpf_map_update_elem(route_fd, &key, &route, BPF_ANY);
-}
-
-static void set_ipv4_checksum_correction(struct ipv4_flow *ipv4f,
-		struct ipv4_info *ipv4i)
-{
-	unsigned int saddr_corr = 0;
-	unsigned int daddr_corr = 0;
-	unsigned int sport_corr = 0;
-	unsigned int dport_corr = 0;
-	unsigned int corr;
-
-	if (ipv4f->saddr != ipv4i->nat_saddr
-			|| ipv4f->daddr != ipv4i->nat_daddr
-			|| ipv4f->sport != ipv4i->nat_sport
-			|| ipv4f->dport != ipv4i->nat_dport)
-		ipv4i->flags |= FP_INFO_FLAG_NAT;
-
-	ipv4i->ip_csum_corr = 0x0001;
-
-	/* Calculate checksum correction */
-	saddr_corr = (ipv4f->saddr & 0xffff) + (ipv4f->saddr >> 16)
-		+ ((ipv4i->nat_saddr & 0xffff) ^ 0xffff)
-		+ ((ipv4i->nat_saddr >> 16) ^ 0xffff);
-	daddr_corr = (ipv4f->daddr & 0xffff) + (ipv4f->daddr >> 16)
-		+ ((ipv4i->nat_daddr & 0xffff) ^ 0xffff)
-		+ ((ipv4i->nat_daddr >> 16) ^ 0xffff);
-	sport_corr = ipv4f->sport + (ipv4i->nat_sport ^ 0xffff);
-	dport_corr = ipv4f->dport + (ipv4i->nat_dport ^ 0xffff);
-
-	/* IP checksum */
-	/* NAT correction */
-	corr = saddr_corr + daddr_corr;
-	while (corr >> 16)
-		corr = (corr & 0xffff) + (corr >> 16);
-
-	if (corr == 0xffff)
-		corr = 0;
-
-	/* TTL correction */
-	corr += 0x0001;
-	if (corr + 1 >= 0x10000)
-		corr++;
-
-	ipv4i->ip_csum_corr = corr;
-
-	/* UDP/TCP checksum */
-	corr = saddr_corr + daddr_corr + dport_corr + sport_corr;
-
-	while (corr >> 16)
-		corr = (corr & 0xffff) + (corr >> 16);
-
-	if (corr == 0xffff)
-		corr = 0;
-
-	ipv4i->trans_csum_corr = corr;
-}
-
-static int update_ipv4_entries(int map_fd)
-{
-	struct ipv4_flow ipv4_key = {};
-	struct ipv4_info ipv4_value = {};
-
-	FILE *file = fopen(IPV4_INPUT_FILE, "r");
-	if (!file) {
-		perror("fopen");
-		return -1;
-	}
-	char interface_name[64] = {};
-	bool entry_started = false;
-	char line[256];
-	int entry_count =0;
-	int ret = 0;
-	while (fgets(line, sizeof(line), file)) {
-		// Trim leading whitespace
-		char *trimmed = line;
-		while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\r')
-			trimmed++;
-		// Entry boundary
-		if (*trimmed == '\n' || *trimmed == '\0') {
-			if (!entry_started)
-				continue;
-			// Process complete entry
-			if (interface_name[0] != '\0') {
-				ipv4_value.route_ifindex = if_nametoindex(interface_name);
-				if (ipv4_value.route_ifindex == 0) {
-					printf("Invalid interface name: %s\n", interface_name);
-				}
-			}
-			ipv4_value.flags = FP_INFO_FLAG_FAST_PATH;
-			set_ipv4_checksum_correction(&ipv4_key, &ipv4_value);
-			ret = bpf_map_update_elem(map_fd, &ipv4_key, &ipv4_value, BPF_ANY);
-			if (ret) {
-				perror("bpf_map_update_elem");
-				break;
-			}
-		}
-		// Parse key-value pair
-		char key[64], val[64];
-		if (sscanf(trimmed, "%[^=]=%s", key, val) != 2)
-			continue;
-		entry_started = true;
-		if (strcmp(key, "saddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_key.saddr);
-		else if (strcmp(key, "daddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_key.daddr);
-		else if (strcmp(key, "sport") == 0)
-			ipv4_key.sport = htons(atoi(val));
-		else if (strcmp(key, "dport") == 0)
-			ipv4_key.dport = htons(atoi(val));
-		else if (strcmp(key, "protocol") == 0)
-			ipv4_key.protocol = atoi(val);
-		else if (strcmp(key, "nat_saddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_value.nat_saddr);
-		else if (strcmp(key, "nat_daddr") == 0)
-			inet_pton(AF_INET, val, &ipv4_value.nat_daddr);
-		else if (strcmp(key, "nat_sport") == 0)
-			ipv4_value.nat_sport = htons(atoi(val));
-		else if (strcmp(key, "nat_dport") == 0)
-			ipv4_value.nat_dport = htons(atoi(val));
-		else if (strcmp(key, "mtu") == 0)
-			ipv4_value.mtu = atoi(val);
-		else if (strcmp(key, "interface") == 0)
-			strncpy(interface_name, val, sizeof(interface_name) - 1);
-	}
-	// Handle last entry if file end with a newline
-	if (entry_started) {
-		if (interface_name[0] != '\0') {
-			ipv4_value.route_ifindex = if_nametoindex(interface_name);
-			if (ipv4_value.route_ifindex == 0) {
-				fprintf(stderr, "Invalid interface name: %s\n", interface_name);
-			}
-		}
-		ipv4_value.flags = FP_INFO_FLAG_FAST_PATH;
-		set_ipv4_checksum_correction(&ipv4_key, &ipv4_value);
-		++entry_count;
-		ret = bpf_map_update_elem(map_fd, &ipv4_key, &ipv4_value, BPF_ANY);
-		if (ret){
-			printf("bpf_map_update_elem (last entry)");
-		}
-	}
-	fclose(file);
-	return ret;
-}
-
-static void convert_mac_address(const char *addr_str, unsigned char *mac_addr)
-{
-	unsigned int input[ETH_ALEN];
-
-	sscanf(addr_str, "%x:%x:%x:%x:%x:%x", &input[0], &input[1], &input[2],
-			&input[3], &input[4], &input[5]);
-
-
-	mac_addr[0] = input[0];
-	mac_addr[1] = input[1];
-	mac_addr[2] = input[2];
-	mac_addr[3] = input[3];
-	mac_addr[4] = input[4];
-	mac_addr[5] = input[5];
-}
-
-static int get_device_info(char *device, unsigned char *dev_addr, int *if_index)
-{
-	char device_info_path[256];
-	FILE *fp;
-	char mac_addr_str[3*ETH_ALEN];
-
-	/* MAC address */
-	if (dev_addr) {
-		sprintf(device_info_path, "/sys/class/net/%s/address", device);
-		fp = fopen(device_info_path, "r");
-		if (!fp)
-			return -1;
-		fgets(mac_addr_str, 3*ETH_ALEN, fp);
-		convert_mac_address(mac_addr_str, dev_addr);
-		fclose(fp);
-	}
-
-	/* Interface index */
-	if (if_index) {
-		sprintf(device_info_path, "/sys/class/net/%s/ifindex", device);
-		fp = fopen(device_info_path, "r");
-		if (!fp)
-			return -1;
-		*if_index = atoi(fgets((char *)if_index, 4, fp));
-		fclose(fp);
-	}
-
-	return 0;
-}
-
 int main(int argc, char **argv)
 {
 	const char *prog_name = "xdp_fp";
-	struct bpf_program *prog = NULL;
-	struct bpf_program *pos;
-	const char *sec_name;
-	int prog_fd = -1;
 	char filename[PATH_MAX];
+	const char *sec_name;
+	struct bpf_program *pos;
 	struct bpf_object *obj;
-	int opt, i, idx, err;
-	int attach = 1;
+	int prog_fd = -1, nat64_fd = -1, nat46_fd = -1;
+	int opt, i, idx, err, icount = 0;
 	int ret = -1;
+	int attach = 1;
+	__u32 port_key = -1, port_value = -1;
+	int modules_key;
 
-	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1;
-	char lif[MAX_IF_NAME_LEN], wif[MAX_IF_NAME_LEN];
+	int ipv4_fd = -1, ipv6_fd = -1, route_fd = -1, port_fd = -1, modules_fd = -1;
+	char fif[MAX_IF_NAME_LEN];
 
-	int reset_stat = 0, print_stat = 0, ff_disabled = 0, ff_status, show_globals = 0;
+	int reset_stat = 0, print_stat = 0, ff_disabled = 0, ff_status, show_globals = 0,
+	    user_rules = 0;
 	int ff_update = 1;
 	int fd_stats, fd_globals;
 	struct stats_entry *stats_value;
@@ -430,7 +142,7 @@ int main(int argc, char **argv)
 	int globals_key;
 	unsigned int nr_cpus = sysconf(_SC_NPROCESSORS_CONF);
 
-	while ((opt = getopt(argc, argv, "dDSFzsergh")) != -1) {
+	while ((opt = getopt(argc, argv, "dauSFzserghblDP")) != -1) {
 		switch (opt) {
 			case 'd':
 				attach = 0;
@@ -441,7 +153,7 @@ int main(int argc, char **argv)
 			case 'F':
 				xdp_flags &= ~XDP_FLAGS_UPDATE_IF_NOEXIST;
 				break;
-			case 'D':
+			case 'a':
 				prog_name = "xdp_fp";
 				break;
 			case 'z':
@@ -463,11 +175,34 @@ int main(int argc, char **argv)
 				goto stats;
 				break;
 			case 'g':
+				ff_update = 0;
 				show_globals = 1;
 				goto stats;
 				break;
+			case 'u':
+				user_rules = 1;
+				break;
+			case 'b':
+				prog_name = "xdp_fp_bridge";
+				break;
 			case 'h':
 				print_usage(basename(argv[0]));
+				return 1;
+			case 'D':
+				dump_ipv4_flows();
+				dump_ipv6_flows();
+				dump_fp_routes();
+#ifdef NAT64_SIIT
+    				dump_nat64_ip6_ip4_src_map();
+				dump_nat64_ip4_ip6_src_route_map();
+				dump_nat64_dst_ip_route_map();
+#endif
+				return 1;
+			case 'P':
+				load_config_and_populate_maps();
+				return 1;
+			case 'l':
+				set_flow_rate_limit();
 				return 1;
 			default:
 				print_usage(basename(argv[0]));
@@ -483,18 +218,19 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if (argv[0][0]== '.' && argv[0][1]=='/')
+		snprintf(filename, sizeof(filename), "%s_kern.o", &argv[0][2]);
+	else
+		snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
+
+	if (access(filename, O_RDONLY) < 0) {
+		printf("error accessing file %s: %s\n",
+			filename, strerror(errno));
+		return 1;
+	}
+	printf("Program Name %s\n", prog_name);
+
 	if (attach) {
-		if (argv[0][0]== '.' && argv[0][1]=='/')
-			snprintf(filename, sizeof(filename), "%s_kern.o", &argv[0][2]);
-		else
-			snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
-
-		if (access(filename, O_RDONLY) < 0) {
-			printf("error accessing file %s: %s\n",
-				filename, strerror(errno));
-			return 1;
-		}
-
 		obj = bpf_object__open_file(filename, NULL);
 		if (libbpf_get_error(obj))
 			return 1;
@@ -512,17 +248,67 @@ int main(int argc, char **argv)
 			return 1;
 		}
 
+		modules_fd = bpf_object__find_map_fd_by_name(obj, "fp_modules");
+		if (modules_fd < 0) {
+			printf("bpf_object__find_map_fd_by_name failed for fp_modules");
+			goto out;
+		}
+	
 		bpf_object__for_each_program(pos, obj) {
 			sec_name = bpf_program__section_name(pos);
 			if (sec_name && !strcmp(sec_name, prog_name)) {
-				prog = pos;
-				break;
+				prog_fd = bpf_program__fd(pos);
+				if (prog_fd < 0) {
+					printf("program not found: %s\n", strerror(prog_fd));
+					goto out;
+				}
+			}
+			if (sec_name && !strcmp(sec_name, "nat64_siit")) {
+				nat64_fd = bpf_program__fd(pos);
+				if (nat64_fd < 0) {
+					printf("program not found: %s\n", strerror(nat64_fd));
+					goto out;
+				}
+				modules_key =  XDP_NAT64_SIIT;
+				err = bpf_map_update_elem(modules_fd, &modules_key, &nat64_fd, BPF_ANY);
+				if (err) {
+					fprintf(stderr, "Update modules_fd fails\n");
+					goto out;
+				}
+			}
+			if (sec_name && !strcmp(sec_name, "nat46_siit")) {
+				nat46_fd = bpf_program__fd(pos);
+				if (nat46_fd < 0) {
+					printf("program not found: %s\n", strerror(nat46_fd));
+					goto out;
+				}
+				modules_key =  XDP_NAT46_SIIT;
+				err = bpf_map_update_elem(modules_fd, &modules_key, &nat46_fd, BPF_ANY);
+				if (err) {
+					fprintf(stderr, "Update modules_fd fails\n");
+					goto out;
+				}
 			}
 		}
-		prog_fd = bpf_program__fd(prog);
-		if (prog_fd < 0) {
-			printf("program not found: %s\n", strerror(prog_fd));
-			return 1;
+
+		port_fd = bpf_object__find_map_fd_by_name(obj, "fp_tx_ports");
+		if (port_fd < 0) {
+			printf("bpf_object__find_map_fd_by_name failed for fp_tx_ports");
+			goto out;
+		}
+
+		ipv4_fd = bpf_object__find_map_fd_by_name(obj, "fp_ipv4");
+		if (ipv4_fd < 0) {
+			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+					PINNED_IPV4, strerror(errno), errno);
+			goto out;
+		}
+
+		route_fd = bpf_object__find_map_fd_by_name(obj, "fp_route");
+		if (route_fd < 0) {
+			fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+					PINNED_ROUTE, strerror(errno), errno);
+			goto out;
 		}
 	}
 
@@ -535,59 +321,55 @@ int main(int argc, char **argv)
 			fprintf(stderr, "Invalid arg\n");
 			return 1;
 		}
+		sprintf(fif, "%s", argv[i]);
+
 		if (!attach) {
 			err = do_detach(idx, argv[i], prog_name);
 			if (err)
 				ret = err;
 		} else {
+			if (icount++ > MAX_PORT) {
+				fprintf(stderr, "No more ports allowed\n");
+				break;
+			}
 			err = do_attach(idx, prog_fd, argv[i]);
-			if (err)
+			if (err) {
+				fprintf(stderr, "Port = %d program attach error\n", idx);
 				ret = err;
+			}
+
+			/* populate fp_tx_port table */
+			port_key = idx;
+			port_value = idx;
+			err = bpf_map_update_elem(port_fd, &port_key, &port_value, BPF_ANY);
+			if (err) {
+				fprintf(stderr, "Update fp_tx_port failsf or idx = %d\n", idx);
+			} else {
+				printf("Added ifindex %d (%s) to fp_tx_ports map\n", idx, argv[i]);
+			}
+			if (user_rules) {
+				/* Update the ebpf maps*/
+				ret = get_device_info(fif, if1_mac_addr, NULL);
+				if (ret) {
+					fprintf(stderr, "unknown linterface = %s\n", fif);
+					goto out;
+				}
+				ret = route_add(route_fd, idx, if1_mac_addr, dst_mac_addr1, NULL);
+				if (ret) {
+					fprintf(stderr, "BPF update route: %d", idx);
+					goto out;
+				}
+			}
 		}
 	}
-	snprintf(lif, sizeof(lif), "%s", argv[2]);
-	snprintf(wif, sizeof(wif), "%s", argv[3]);
 
-	/* Update the ebpf maps*/
-	ret = get_device_info(lif, if1_mac_addr, &lan_if);
-	if (ret)
-		goto out;
-	ret = get_device_info(wif, if2_mac_addr, &wan_if);
-	if (ret)
-		goto out;
-
-	ipv4_fd = bpf_obj_get(PINNED_IPV4);
-	if (ipv4_fd < 0) {
-		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-				PINNED_IPV4, strerror(errno), errno);
-		goto out;
+	if (user_rules) {
+		ret = update_ipv4_entries(ipv4_fd);
+		if (ret) {
+			perror("BPF update IPv4 entries");
+			goto out;
+		}
 	}
-
-	route_fd = bpf_obj_get(PINNED_ROUTE);
-	if (route_fd < 0) {
-		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
-				PINNED_ROUTE, strerror(errno), errno);
-		goto out;
-	}
-
-	ret = route_add(route_fd, lan_if, if1_mac_addr, dst_mac_addr1, NULL);
-	if (ret) {
-		fprintf(stderr, "BPF update route: %d", lan_if);
-		goto out;
-	}
-
-	ret = route_add(route_fd, wan_if, if2_mac_addr, dst_mac_addr2, NULL);
-	if (ret) {
-		fprintf(stderr, "BPF update route: %d", wan_if);
-		goto out;
-	}
-
-	ret = update_ipv4_entries(ipv4_fd);
-	if (ret) {
-		perror("BPF update IPv4 entries");
-		goto out;
-	}
-
 stats:
 	/* Getting stats part Init fd entries */
 	fd_stats = bpf_obj_get(PINNED_STATS);
@@ -601,6 +383,12 @@ stats:
 	if (fd_globals < 0) {
 		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
 				PINNED_GLOBALS, strerror(errno), errno);
+		exit(EXIT_FAILURE);
+	}
+	ipv4_fd = bpf_obj_get(PINNED_IPV4);
+	if (ipv4_fd < 0) {
+		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
+				PINNED_IPV4, strerror(errno), errno);
 		exit(EXIT_FAILURE);
 	}
 
@@ -641,21 +429,45 @@ stats:
 
 		globals_key = GLOB_FF_DISABLE;
 		bpf_map_lookup_elem(fd_globals, &globals_key, &global_value);
-		printf("glob_ff_disabled: %d\n", global_value);
+		printf("Global Fast Forward disabled: %d\n", global_value);
 	}
 
 	free(stats_value);
+	if (!attach) {
+		obj = bpf_object__open_file(filename, NULL);
+		if (libbpf_get_error(obj))
+			return 1;
+
+		bpf_object__unpin_maps(obj, PINNED_MAPS);
+		bpf_object__close(obj);
+	}
 
 	return ret;
 
 out:
+        if (port_fd != -1)
+                close(port_fd);
         if (route_fd != -1)
                 close(route_fd);
         if (ipv4_fd != -1)
                 close(ipv4_fd);
         if (ipv6_fd != -1)
                 close(ipv6_fd);
+        if (nat64_fd != -1)
+                close(nat64_fd);
+        if (nat46_fd != -1)
+                close(nat46_fd);
+        if (modules_fd != -1)
+                close(modules_fd);
+
+	if (!attach) {
+		obj = bpf_object__open_file(filename, NULL);
+		if (libbpf_get_error(obj))
+			return 1;
+
+		bpf_object__unpin_maps(obj, PINNED_MAPS);
+		bpf_object__close(obj);
+	}
 
 	return ret;
-
 }

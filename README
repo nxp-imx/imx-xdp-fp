@@ -1,97 +1,445 @@
 # Compilation steps
-# Set kernel headers include path:
-export SDKTARGETSYSROOT=<path>
-Note: Kernel headers can be installed by using command in kernel source:
-	"make ARCH=arm64 headers_install INSTALL_HDR_PATH=<path>"
 
-# Set CC path
+## Setup Compilation Environment:
+
+### Set CC path
+
+```text
 export CC=<gcc path>
+```
+or
 
-# This repository has dependancy on bpf, zstd, z and elf libraries.
-# To enable BPF debugs , add "-DDEBUG" in CLANG_FLAGS.
-# Set headers and libraries path in CFLAGS, CLANG_FLAGS and LDFLAGS, then run:
+If using SDK toolchain, set `CC` as:
 
-make
+```text
+source <environment-setup-armv8a-poky-linux>
+```
+e.g.:
+```bash
+source /opt/fsl-imx-xwayland/6.12-styhead/environment-setup-armv8a-poky-linux
+```
 
-===================================================================================
-NAT Flow Setup and Testing Guide
+### Set Linux Headers or SDK sysroot
 
-+-------------------+                         +-------------------+
-|  Sprint Port 1    |                         |  Sprint Port 2    |
-|  IPv4: 1.1.1.2    |                         |  IPv4: 4.4.4.1    |
-|  Gateway: 1.1.1.1 |                         |  Gateway: 4.4.4.4 |
-+---------+---------+                         +---------+---------+
-         |                                             |
-         |                                             |
-         | eth0                                  eth1  |
-+---------+---------------------------------------------+---------+
-|                       i.MX95 Board                              |
-|       eth0: 1.1.1.1                    eth1: 4.4.4.4            |
-|                                                                 |
-|                 (IP Forwarding Enabled)                         |
-+-----------------------------------------------------------------+
+If using SDK toolchain, `SDKTARGETSYSROOT` will automatically be set.
+If using Non-SDK toolchain, then set Linux Headers as:
 
-1. Setup Requirements
+```text
+export SDKTARGETSYSROOT=<Linux Headers Path>
+```
 
- Hardware:
+> Kernel headers can be installed by using command in kernel source: \
+>	"make ARCH=arm64 headers_install INSTALL_HDR_PATH=<path>"
+
+### Other Dependencies:
+
+This repository has dependancy on `bpf`, `zstd`, `z` and `elf` libraries.
+Set headers and libraries path in CFLAGS, CLANG_FLAGS and LDFLAGS as:
+
+```text
+export LDFLAGS=-L<imx-xdp-fp-libs>/usr/lib
+export CFLAGS=-I<imx-xdp-fp-libs>/usr/include
+export CLANG_FLAGS=-I<imx-xdp-fp-libs>/usr/include
+```
+
+> Download these libs from [ArchLinux ARM Libbpf](https://archlinuxarm.org/packages/aarch64/libbpf)
+
+### Compilation:
+
+```bash
+make install
+```
+
+> Compiled images will be in `deploy_xdp`
+
+### DEBUGS:
+
+To enable BPF debugs , add "-DDEBUG" in CLANG_FLAGS.
+
+> To see BPF debugs, following CONFIGS must be enable in LINUX: \
+> DEBUG_INFO_REDUCED set to n \
+> CONFIG_DEBUG_INFO_BTF set to y \
+> DYNAMIC_FTRACE set to y \
+> NF_CT_NETLINK to m \
+> \
+> Update `pahole` to latest version to compile linux v6.12 with DEBUG_INFO_BTF
+
+
+View debug prints at console:
+```bash
+cat /sys/kernel/debug/tracing/trace_pipe
+```
+
+
+---
+
+# Setup Instructions:
+
+## Networking setup diagram:
+
+```text
++------------------------+                         +-----------------------+
+|  Sprint Port 1         |                         |  Sprint Port 2        |
+|  IPv4: 1.1.1.1         |                         |  IPv4: 2.1.1.1        |
+|  Gateway: 1.1.1.2      |                         |  Gateway: 2.1.1.2     |
+| MAC: 00:10:94:00:00:02 |                         | MAC: 00:10:94:00:00:03|
++---------+--------------+                         +---------+-------------+
+          |                                                  |
+          |                                                  |
+          | eth0                                  eth1       |
++---------+------------------------------------------------------+---------+
+|                               i.MX95 Board                               |
+|       eth0: 1.1.1.2                             eth1: 2.1.1.2            |
+|                                                                          |
+|                         (IP Forwarding Enabled)                          |
++--------------------------------------------------------------------------+
+
+```
+
+---
+
+## Setup Requirements
+
+### Hardware Requirements:
 - i.MX95 board with two available Ethernet interfaces
-- Two Sprint ports
+- Two Sprint ports or Linux PCs.
 
-2. Network Setup
-   Sprint Port Configuration
-   1. Connect Sprint Port 1 to eth0 on the i.MX95 board.
-     Configure the connected device:
-       IPv4 Address: 1.1.1.2
-       IPv4 Gateway: 1.1.1.1
+---
 
-   2. Connect Sprint Port 2 to eth1 on the i.MX95 board.
-     Configure the connected device:
-       IPv4 Address: 4.4.4.1
-       IPv4 Gateway: 4.4.4.4
+## xdp_fp Test Methods:
 
-i.MX95 Board Configuration
-Assign IP addresses to Ethernet interfaces:
-  ifconfig eth0 1.1.1.1 up
-  ifconfig eth1 4.4.4.4 up
-Add a static route:
-  ip route add 8.8.8.0/24 via 4.4.4.1
-Enable IP forwarding:
-  echo 1 > /proc/sys/net/ipv4/ip_forward
-Verify network connectivity:
-  ping 1.1.1.2
-  ping 4.4.4.1
+xdp_fp can be tested in 3 modes:
 
-3. NAT Flow Rule Setup
+1. Bridge fastpath mode (xdp_fp_bridge)
+2. IP forwarding fastpath mode with dynamic rules (xdp_fp with cmm)
+3. IP forwarding fastpath mode with static rules (xdp_fp -u)
+
+### 1. Bridge fastpath mode:
+
+Run xdp fastpath in bridge mode:
+
+#### Commands:
+
+Configure ethernet interfaces:
+
+```bash
+./load_cmm_modules.sh .
+./network_setup.sh -p eth0 1.1.1.2 eth1 2.1.1.2
+```
+> `load_cmm_modules.sh` and `network_setup.sh` are available at `fpr-cmm/scripts/`.
+
+```bash
+cd /opt/xdp/
+./xdp_fp -a eth0 eth1 -b
+```
+
+> Change the number and names of ethernet interfaces as per the requirement.
+
+#### Traffic Test Steps:
+
+- Prepare a traffic stream on spirent port 1 with source MAC 00:10:94:00:00:02 and destination MAC 00:10:94:00:00:03
+- Prepare a traffic stream on spirent port 2 with source MAC 00:10:94:00:00:03 and destination MAC 00:10:94:00:00:02
+- Send traffic from both streams to observe the bridging behavior. For the first few packets,
+  the XDP bridge program will learn the MAC addresses and classify them as unmatched traffic.
+  Once the MAC addresses are learned, subsequent traffic will be counted as matched traffic.
+- See Statistics:
+```bash
+./xdp_fp -s
+```
+- Statistics Log:
+
+```log
+root@imx95evk:~/opt/xdp# ./xdp_fp -s
+Printing stats
+--------------------------------------------------------------
+----------------- IP Forwarding Mode -------------------------
+--------------------------------------------------------------
+**************************************************************
+Total: FP Bytes:               0   FP Packets:               0
+Total: SP Bytes:               0   SP Packets:               0
+--------------------------------------------------------------
+--------------------------------------------------------------
+-------------------- Bridge Mode -----------------------------
+--------------------------------------------------------------
+CPU0   FP Bytes:           22320   FP Packets:             180
+CPU0   FP Matched Packets:                                 60
+CPU0   FP Unmatched Packets:                               120
+**************************************************************
+Total: FP Bytes:           22320   FP Packets:             180
+Total: SP Bytes:               0   SP Packets:               0
+--------------------------------------------------------------
+```
+- De-attach program:
+```bash
+./xdp_fp -d eth0 eth1 -b
+```
+
+### 2. IP forwarding fastpath mode with dynamic rules (with CMM):
+
+Run xdp fastpath in IP forwarding mode with dynamic rules. This mode
+has dependency on cmm. Refer `fpr-cmm/README` for detail cmm running steps.
+
+#### Run CMM and XDP:
+
+Configure ethernet interfaces and enable forwarding:
+
+```bash
+./load_cmm_modules.sh .
+./network_setup.sh eth0 1.1.1.2 eth1 2.1.1.2
+```
+> `load_cmm_modules.sh` and `network_setup.sh` are available at `fpr-cmm/scripts/`.
+
+Run xdp:
+
+```bash
+./xdp_fp -a eth0 eth1
+```
+> Change the number and names of ethernet interfaces as per the requirement.
+
+CMM Command:
+```bash
+./cmm
+```
+#### Traffic Test Steps:
+- Prepare a traffic stream on spirent port 1 with source IP 1.1.1.1, GW 1.1.1.2 and destination IP 2.1.1.1 and destination MAC of interface eth0.
+- Prepare a traffic stream on spirent port 2 with source IP 2.1.1.1, GW 2.1.1.2 and destination IP 1.1.1.1 and destination MAC of interface eth1.
+- Resolve ARP.
+- Send traffic from both streams to observe the IP forwarding behavior. For the first few packets,
+  the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+  Once the connection established, subsequent traffic will be counted as fastpath traffic.
+- Check statistics:
+```bash
+./xdp_fp -s
+```
+- Check connections and routes in cmm:
+```bash
+telnet 127.0.0.1 2103
+# Login: admin / admin
+sh conn
+sh route
+quit
+```
+- De-attach program:
+```bash
+./xdp_fp -d eth0 eth1
+```
+
+#### Tested Cases in this mode
+ - UDP IPv4 traffic
+ - TCP IPv4 traffic
+ - SNAT and DNAT (with iptables commands)
+   - ```bash
+     ./load_cmm_modules.sh
+     ./network_setup.sh eth0 1.1.1.2 eth1 2.1.1.2
+     ./xdp_fp -a eth0 eth1
+     ./cmm
+     ip route add 9.1.1.0/24 via 2.1.1.1
+     iptables -t nat -A POSTROUTING -p udp -j SNAT --to-source 2.1.1.2:10000
+     ```
+   - Prepare and send traffic
+     - Prepare a traffic stream on spirent port 1 with source IP 1.1.1.1, GW 1.1.1.2 and destination IP 9.1.1.1 and destination MAC of interface eth0.
+     - Resolve ARP of both GW addresses "1.1.1.1" adn "2.1.1.1" on board.
+     - Send traffic from spirent port1 to observe the IP forwarding and NAT behavior. For the first few packets,
+       the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+       Once the connection established, subsequent traffic will be counted as fastpath traffic.
+     - Capture traffic on Spirent port2 to see NATed traffic.
+     - Check statistics of each core:
+       ```bash
+       ./xdp_fp -s
+       ```
+
+ - VLAN traffic forwarding. Quick steps:
+   - ```bash
+     ./load_cmm_modules.sh
+     ./network_setup.sh eth0 1.1.1.2 eth1 2.1.1.2
+     ip link add link eth0 name eth0.10 type vlan id 10
+     ip link add link eth1 name eth1.20 type vlan id 20
+     ip link set eth0.10 up
+     ip link set eth1.20 up
+     ip addr add 1.1.10.2/24 dev eth0.10
+     ip addr add 2.1.20.2/24 dev eth1.20
+     ./xdp_fp -a eth0 eth1
+     ./cmm
+     ```
+   - Check VLANs
+     ```bash
+     telnet 127.0.0.1 2103
+     # Login: admin / admin
+     sh vlan
+     ```
+   - Prepare and send traffic
+     - Prepare a traffic stream on spirent port 1 with source IP 1.1.10.1, GW 1.1.10.2 and destination IP 2.1.20.1 and destination MAC of interface eth0.
+     - Prepare a traffic stream on spirent port 2 with source IP 2.1.20.1, GW 2.1.20.2 and destination IP 1.1.20.1 and destination MAC of interface eth1.
+     - Resolve ARP.
+     - Send traffic from both streams to observe the VLAN IP forwarding behavior. For the first few packets,
+       the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+       Once the connection established, subsequent traffic will be counted as fastpath traffic.
+     - Check statistics:
+       ```bash
+       ./xdp_fp -s
+       ```
+ - UDP IPv6 Forwarding. Quick Steps:
+   - ```bash
+     ./load_cmm_modules.sh
+     ./network_setup.sh eth0 2001:db8:1::2 eth1 2001:db8:2::2
+     ./xdp_fp -a eth0 eth1
+     ./cmm
+     ```
+   - Prepare and send traffic
+     - Prepare a traffic stream on spirent port 1 with source IP 2001:DB8:1::1, GW 2001:DB8:1::2 and destination IP 2001:DB8:2::1 and destination MAC of interface eth0.
+     - Prepare a traffic stream on spirent port 2 with source IP 2001:DB8:2::1, GW 2001:DB8:2::2 and destination IP 2001:DB8:1::1 and destination MAC of interface eth1.
+     - Resolve ARP and check:
+       - ```bash
+         ip -6 neigh
+         ```
+     - Send traffic from both streams to observe the IPv6 forwarding behavior. For the first few packets,
+       the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+       Once the connection established, subsequent traffic will be counted as fastpath traffic.
+     - Check statistics:
+       ```bash
+       ./xdp_fp -s
+       ```
+     - Check connections:
+       ```bash
+       telnet 127.0.0.1 2103
+       # Login: admin / admin
+       sh conn
+       ```
+ - UDP IPv4 Multi-flow performance. Quick Steps:
+   - ```bash
+     ./load_cmm_modules.sh
+     ./network_setup.sh --no-rxhash-off eth0 1.1.1.2 eth1 2.1.1.2
+     ./xdp_fp -a eth0 eth1
+     ./cmm
+     ip route add 2.1.20.0/24 via 2.1.1.1 dev eth1
+     ip route add 1.1.10.0/24 via 1.1.1.1 dev eth0
+     ```
+   - Prepare and send traffic
+     - Prepare a traffic stream on spirent port 1 with source IP 1.1.10.3, GW 1.1.1.2 and destination IP 2.1.20.3 with IPv4 Modifier "Count=128;Step=0.0.0.1" and destination MAC of interface eth0.
+     - Prepare a traffic stream on spirent port 2 with source IP 2.1.20.3, GW 2.1.1.2 and destination IP 1.1.10.2 with IPv4 Modifier "Count=128;Step=0.0.0.1" and destination MAC of interface eth1.
+     - Resolve ARP of both GW addresses "1.1.1.1" adn "2.1.1.1" on board.
+     - Send traffic from both streams to observe the IP forwarding behavior. For the first few packets,
+       the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+       Once the connection established, subsequent traffic will be counted as fastpath traffic.
+     - Check statistics of each core:
+       ```bash
+       ./xdp_fp -s
+       ```
+ - NAT64 (SIIT). Quick Steps:
+   - Compile xdp_fp with "-DNAT64_SIIT". Pass it in both CLANG_FLAGS and CFLAGS.
+   - ```bash
+     ./network_setup.sh eth0 2001:db8:1::2 eth1 2001:db8:2::2
+     ./xdp_fp -a eth0 eth1
+     ./xdp_fp -P
+     echo 1 > /proc/sys/net/ipv4/conf/eth1/proxy_arp
+     ip neigh add proxy 2.1.1.5 dev eth1
+     ```
+   - Prepare and send traffic
+     - Spirent Port 1: Source IP `2001:DB8:1::1`, GW `2001:DB8:1::2`, Destination IP `64:FF9B::201:101`, Destination MAC of `eth0`, ICMP request packet.
+     - Resolve ARP on Spirent2/Server PC:
+       ```bash
+       arping/ping 2.1.1.5
+       arp -s
+       ```
+     - Send traffic and capture on same Spirent port1 to see icmp reply packets.
+   - Dump Rules:
+     ```bash
+     ./xdp_fp -D
+     ```
+
+### 3. IP forwarding fastpath mode with static user rules:
+
+Run xdp fastpath in IP forwarding mode with user rules. This mode
+use user given 'input.txt' file for forwarding and NATing.
+
+Configure ethernet interfaces and enable forwarding:
+
+```bash
+./network_setup.sh eth0 1.1.1.2 eth1 2.1.1.2
+```
+> `network_setup.sh` is available at `fpr-cmm/scripts/`.
+
+Run xdp:
+
+```bash
+./xdp_fp -a eth0 eth1 -u
+```
+
+> Change the number and names of ethernet interfaces as per the requirement.\
+> `input.txt` file must present in current directory.
+
+#### Configure `input.txt` file as:
+
 Edit the input.txt file available at /opt/xdp/ and add the following NAT flow rule:
-  nat_saddr=4.4.4.2
+```text
+  nat_saddr=2.1.1.2
   nat_daddr=8.8.8.8
   nat_sport=1036
   nat_dport=1024
   mtu=1500
-  saddr=1.1.1.2
+  saddr=1.1.1.1
   daddr=8.8.8.8
   sport=1024
   dport=1024
   protocol=17
   interface=eth1
+```
 
-4. Load the XDP program on both eth0 and eth1.
-	- cd /opt/xdp/
-	- xdp_fp -D eth0 eth1
+Add a static route:
+```bash
+  ip route add 8.8.8.0/24 via 2.1.1.1
+```
 
-	Note: xdp_fp, xdp_fp_kern.o and input.txt must be present in the same directory.
-		use "xdp_fp -h" for help.
-
-5. Traffic Generation and Packet Capture
-Generate a traffic stream from Sprint Port 1 towards 8.8.8.8.
-Capture the packets at Sprint Port 2.
+#### Traffic Generation and Packet Capture
+- Prepare a traffic stream on spirent port 1 with source IP 1.1.1.1, GW 1.1.1.2 and destination IP 8.8.8.8 and destination MAC of interface eth0, UDP Sport 1024, UDP Dport 1024.
+- Resolve ARP and send traffic.
+- Send traffic to observe the IP forwarding  and SNAT behavior. For the first few packets,
+  the XDP program will send packets to linux to establish a connection and classify them as slow path traffic.
+  Once the connection established, subsequent traffic will be counted as fastpath traffic.
+- Capture the packets at Spirent Port 2.
 
 You should observe the following traffic pattern in the Wireshark capture:
 
+```bash
 	Time				Source   Destination 	Protocol	Length	Info
-2	2025-04-28 18:27:24.346281	4.4.4.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
-3	2025-04-28 18:27:24.346281	4.4.4.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
-4	2025-04-28 18:27:24.346281	4.4.4.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
-5	2025-04-28 18:27:24.346281	4.4.4.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
-6	2025-04-28 18:27:24.346281	4.4.4.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
+2	2025-04-28 18:27:24.346281	2.1.1.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
+3	2025-04-28 18:27:24.346281	2.1.1.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
+4	2025-04-28 18:27:24.346281	2.1.1.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
+5	2025-04-28 18:27:24.346281	2.1.1.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
+6	2025-04-28 18:27:24.346281	2.1.1.2	 8.8.8.8	    UDP		128	1036 -> 1024 Len=82
+```
+
+- See statistics:
+```bash
+./xdp_fp -s
+```
+- De-attach program:
+```bash
+./xdp_fp -d eth0 eth1
+```
+
+---
+
+## Help
+
+### Command:
+```bash
+./xdp_fp -h
+```
+
+- `-h`    help
+- `-d`    detach program
+- `-S`    use skb-mode
+- `-F`    force loading prog
+- `-a`    attach program (list of ethernet devices)
+- `-b`    run program in bridge mode
+- `-e`    enable Fast Forward (enabled by default)
+- `-r`    disable Fast Forward
+- `-z`    reinitilialize statistics counters
+- `-g`    show global Fast Forward status
+- `-s`    display statistics counters
+- `-D`    dump XDP flows
+- `-P`    Populate NAT64 configuration
+- `-l`    set rate limit of a flow
+- `-u`    load user given rules from input.txt, Applicable with -a option only.
 

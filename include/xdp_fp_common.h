@@ -8,9 +8,19 @@
 
 #include "types.h"
 
+#define XDP_NAT64_SIIT	1
+#define XDP_NAT46_SIIT	2
+
+#define MAX_EXT_HEADERS		16U
+#define IPV6_HEADER_LENGTH	40U
+#define IPV4_HEADER_LENGTH	20U
+#define NAT64_PREFIX 0x0064ff9b  // 64:ff9b::/96 in hex
+
 #define MAX_IPV4_ENTRIES	512
 #define MAX_IPV6_ENTRIES	512
 #define MAX_FP_ROUTES		512
+#define MAX_MAC_ADDR		512
+#define MAX_PORT		512
 
 #define MAX_L2_HEADER_SIZE	18
 
@@ -23,9 +33,9 @@
 
 
 enum {
-	GLOB_ETHERNET_TYPE = 0,
-	GLOB_RAWIP_TYPE,
-	GLOB_IFTYPE_MAX,
+	GLOB_IP_MODE = 0,
+	GLOB_BRIDGE_MODE,
+	GLOB_FP_MAX,
 };
 
 enum {
@@ -67,6 +77,9 @@ struct ipv4_info {
 	int route_ifindex;
 	unsigned int last_timer;
 	u16 mtu;
+	u64 last_time_ns;
+	u64 rate_limit;
+	u64 bytes_count;
 };
 
 struct ipv6_flow {
@@ -88,13 +101,18 @@ struct ipv6_info {
 	int route_ifindex;
 	unsigned int last_timer;
 	u16 mtu;
+	u64 last_time_ns;
+	u64 rate_limit;
+	u64 bytes_count;
 };
 
 struct stats_entry {
-	u64 packets_fp[GLOB_IFTYPE_MAX]; /* fast path => transmitted */
-	u64 bytes_fp[GLOB_IFTYPE_MAX];
-	u64 packets_sp[GLOB_IFTYPE_MAX]; /* slow path => pass */
-	u64 bytes_sp[GLOB_IFTYPE_MAX];
+	u64 packets_fp[GLOB_FP_MAX]; /* fast path => transmitted */
+	u64 bytes_fp[GLOB_FP_MAX];
+	u64 packets_sp[GLOB_FP_MAX]; /* slow path => pass */
+	u64 bytes_sp[GLOB_FP_MAX];
+	u64 m_pkts_fp[GLOB_FP_MAX]; /* For bridge matched  stats*/
+	u64 nm_pkts_fp[GLOB_FP_MAX]; /* For bridge flood stats */
 };
 
 #endif

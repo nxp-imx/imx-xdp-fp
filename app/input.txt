@@ -10,6 +10,8 @@
 # NAT_dest_ip:		Destination IP address in hexdecimal which will be used for NAT
 # NAT_sport:		Layer3 source port for NAT
 # NAT_dport:		Layer3 destination port for NAT
+# mtu			Flow MTU value
+# rate_limit		Rate Limit in Bytes per second (optional)
 
 nat_saddr=192.168.2.1
 nat_daddr=192.168.3.1
