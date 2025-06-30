@@ -31,11 +31,9 @@ struct xdp_fp_ipv6 fp_ipv6 SEC(".maps");
 struct xdp_fp_mac_to_port fp_mac_to_port SEC(".maps");
 struct xdp_fp_tx_ports fp_tx_ports SEC(".maps");
 struct xdp_fp_route fp_route SEC(".maps");
-#ifdef NAT64_SIIT
 struct xdp_nat64_ip6_ip4_src_map nat64_ip6_ip4_src_map SEC(".maps");
 struct xdp_nat64_ip4_ip6_src_route_map nat64_ip4_ip6_src_route_map SEC(".maps");
 struct xdp_nat64_dst_ip_route_map nat64_dst_ip_route_map SEC(".maps");
-#endif
 
 static void __always_inline ipv6_copy(u32 *a, u32 *b)
 {
