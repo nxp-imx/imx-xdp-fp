@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Copyright 2025 NXP
+ */
+
 #ifndef __XDP_MAPS_H__
 #define __XDP_MAPS_H__
 
