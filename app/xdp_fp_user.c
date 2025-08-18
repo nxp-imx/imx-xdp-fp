@@ -321,7 +321,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "Invalid arg\n");
 			return 1;
 		}
-		sprintf(fif, "%s", argv[i]);
+		snprintf(fif, sizeof(fif), "%s", argv[i]);
 
 		if (!attach) {
 			err = do_detach(idx, argv[i], prog_name);

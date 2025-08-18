@@ -175,8 +175,10 @@ int update_ipv4_entries(int map_fd)
 			ipv4_value.mtu = atoi(val);
 		else if (strcmp(key, "rate_limit") == 0)
 			ipv4_value.rate_limit = atoi(val);
-		else if (strcmp(key, "interface") == 0)
-			strncpy(interface_name, val, sizeof(interface_name));
+		else if (strcmp(key, "interface") == 0) {
+			strncpy(interface_name, val, sizeof(interface_name) - 1);
+			interface_name[sizeof(interface_name) - 1] = '\0';
+		}
 	}
 	// Handle last entry if file end with a newline
 	if (entry_started) {
@@ -228,6 +230,7 @@ int get_device_info(char *device, unsigned char *dev_addr, int *if_index)
 			return -1;
 		if (fgets(mac_addr_str, 3*ETH_ALEN, fp) == NULL) {
 			fprintf(stderr, "Mac address get fails for device %s\n", device);
+			fclose(fp);
 			return -1;
 		}
 
@@ -388,6 +391,7 @@ load_config_and_populate_maps(void)
 	if (map_fd_ip6_ip4 < 0) {
 		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
 			PINNED_NAT64_IP6_IP4, strerror(errno), errno);
+		fclose(file);
 		return 1;
 	}
 	map_fd_ip4_ip6_route = bpf_obj_get(PINNED_NAT64_IP4_IP6);
@@ -395,6 +399,7 @@ load_config_and_populate_maps(void)
 		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
 			PINNED_NAT64_IP4_IP6, strerror(errno), errno);
 		close(map_fd_ip6_ip4);
+		fclose(file);
 		return 1;
 	}
 	map_fd_dst_ip_route = bpf_obj_get(PINNED_NAT64_DST_ROUTE);
@@ -403,6 +408,7 @@ load_config_and_populate_maps(void)
 			PINNED_NAT64_DST_ROUTE, strerror(errno), errno);
 		close(map_fd_ip6_ip4);
 		close(map_fd_ip4_ip6_route);
+		fclose(file);
 		return 1;
 	}
 	map_fd_route_map = bpf_obj_get(PINNED_ROUTE);
@@ -412,6 +418,7 @@ load_config_and_populate_maps(void)
 		close(map_fd_ip6_ip4);
 		close(map_fd_ip4_ip6_route);
 		close(map_fd_dst_ip_route);
+		fclose(file);
 		return 1;
 	}
 
@@ -461,6 +468,11 @@ load_config_and_populate_maps(void)
 			ret = get_device_info(ifname, src_mac_str, &ifindex);
 			if (ret) {
 				perror("Failed to get device info\n");
+				close(map_fd_ip6_ip4);
+				close(map_fd_ip4_ip6_route);
+				close(map_fd_dst_ip_route);
+				close(map_fd_route_map);
+				fclose(file);
 				return ret;
 			}
 
