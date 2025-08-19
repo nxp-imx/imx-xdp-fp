@@ -74,6 +74,7 @@ void dump_ipv4_flows()
 	if (ipv4_fd < 0) {
 		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
 			PINNED_IPV4, strerror(errno), errno);
+		fclose(f);
 		return;
 	}
 	fprintf(f, "IPv4 Flow Table:\n");
@@ -125,6 +126,7 @@ void dump_ipv6_flows()
 	if (ipv6_fd < 0) {
 		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
 			PINNED_IPV6, strerror(errno), errno);
+		fclose(f);
 		return;
 	}
 	fprintf(f, "IPv6 Flow Table:\n");
@@ -176,6 +178,7 @@ void dump_fp_routes()
 	if (fp_route_fd < 0) {
 		fprintf(stderr, "bpf_obj_get(%s): %s(%d)\n",
 			PINNED_ROUTE, strerror(errno), errno);
+		fclose(f);
 		return;
 	}
 	fprintf(f, "Fast Path Route Table:\n");
