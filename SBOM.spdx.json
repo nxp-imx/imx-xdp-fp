@@ -1,0 +1,35 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "spdxVersion": "SPDX-2.3",
+  "creationInfo": {
+    "created": "2025-08-24T08:13:15Z",
+    "creators": [
+      "Organization: NXP"
+    ],
+    "licenseListVersion": "3.20"
+  },
+  "name": "imx-xdp-fp-LF_6.12.34_2.1.0",
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://nxp.com/spdx/ef180e6a-6c30-4828-988c-50e86dea2e79",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-package-ef180e6a-6c30-4828-988c-50e86dea2e79",
+      "name": "imx-xdp-fp",
+      "versionInfo": "LF_6.12.34_2.1.0",
+      "licenseConcluded": "(GPL-2.0-only)",
+      "licenseDeclared": "(GPL-2.0-only)",
+      "downloadLocation": "https://github.com/nxp-imx/imx-xdp-fp -b lf-6.12.34-2.1.0",
+      "originator": "Organization: NXP",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-package-ef180e6a-6c30-4828-988c-50e86dea2e79"
+    }
+  ]
+}
