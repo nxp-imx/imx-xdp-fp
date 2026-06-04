@@ -2,23 +2,23 @@
   "SPDXID": "SPDXRef-DOCUMENT",
   "spdxVersion": "SPDX-2.3",
   "creationInfo": {
-    "created": "2026-01-30T02:07:38Z",
+    "created": "2026-06-02T02:52:42Z",
     "creators": [
       "Organization: NXP"
     ],
     "licenseListVersion": "3.26"
   },
-  "name": "imx-xdp-fp-LF_6.18.2_1.0.0",
+  "name": "imx-xdp-fp-lf-6.18.20-2.0.0",
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://nxp.com/spdx/fe94a304-e7b9-4566-a6ea-eb56b660cdd6",
+  "documentNamespace": "https://nxp.com/spdx/07ceb4a7-0ed7-4bff-9176-7ce11bd0d97c",
   "packages": [
     {
-      "SPDXID": "SPDXRef-package-fe94a304-e7b9-4566-a6ea-eb56b660cdd6",
+      "SPDXID": "SPDXRef-package-07ceb4a7-0ed7-4bff-9176-7ce11bd0d97c",
       "name": "imx-xdp-fp",
-      "versionInfo": "LF_6.18.2_1.0.0",
-      "licenseConcluded": "(GPL-2.0-only)",
-      "licenseDeclared": "(GPL-2.0-only)",
-      "downloadLocation": "https://github.com/nxp-imx/imx-xdp-fp -b lf-6.18.2-1.0.0",
+      "versionInfo": "lf-6.18.20-2.0.0",
+      "licenseConcluded": "GPL-2.0-only",
+      "licenseDeclared": "GPL-2.0-only",
+      "downloadLocation": "https://github.com/nxp-imx/imx-xdp-fp -b lf-6.18.20-2.0.0",
       "originator": "Organization: NXP",
       "supplier": "NOASSERTION",
       "externalRefs": [],
@@ -29,7 +29,7 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-package-fe94a304-e7b9-4566-a6ea-eb56b660cdd6"
+      "relatedSpdxElement": "SPDXRef-package-07ceb4a7-0ed7-4bff-9176-7ce11bd0d97c"
     }
   ]
 }
